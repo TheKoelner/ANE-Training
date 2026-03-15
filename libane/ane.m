@@ -602,6 +602,74 @@ void ane_weight_free(ANEWeight *w) {
     if (w && w->data) { free(w->data); w->data = NULL; w->len = 0; }
 }
 
+// ===== Stacked Conv (for benchmarks) =====
+
+ANEWeight ane_weight_stacked(const char *name, int ch, int depth) {
+    size_t wsize = (size_t)ch * ch * 2;           // FP16 weights per layer
+    size_t chunkSize = 64 + wsize;
+    size_t total = 64 + chunkSize * depth;
+    uint8_t *buf = (uint8_t *)calloc(total, 1);
+
+    buf[0] = 0x01; buf[4] = 0x02;
+    for (int i = 0; i < depth; i++) {
+        uint8_t *chunk = buf + 64 + i * chunkSize;
+        chunk[0] = 0xEF; chunk[1] = 0xBE; chunk[2] = 0xAD; chunk[3] = 0xDE;
+        chunk[4] = 0x01; chunk[10] = 0x08;
+        uint16_t *fp16 = (uint16_t *)(chunk + 64);
+        for (size_t j = 0; j < wsize / 2; j++)
+            fp16[j] = (arc4random() & 0x03FF) | 0x2000;  // small random FP16
+    }
+    return (ANEWeight){.data = buf, .len = total, .name = name};
+}
+
+char *ane_mil_stacked_conv(int ch, int sp, int depth, const char *weight_name) {
+    size_t bufsize = 2048 + depth * 512;
+    char *buf = (char *)malloc(bufsize);
+    int pos = 0;
+
+    pos += snprintf(buf + pos, bufsize - pos,
+        "program(1.3)\n"
+        "[buildInfo = dict<string, string>({"
+        "{\"coremlc-component-MIL\", \"3510.2.1\"}, "
+        "{\"coremlc-version\", \"3505.4.1\"}, "
+        "{\"coremltools-component-milinternal\", \"\"}, "
+        "{\"coremltools-version\", \"9.0\"}})]\n{\n"
+        "  func main<ios18>(tensor<fp32, [1, %d, 1, %d]> x) {\n"
+        "    string c_pt = const()[name=string(\"c_pt\"), val=string(\"valid\")];\n"
+        "    tensor<int32, [2]> c_st = const()[name=string(\"c_st\"), val=tensor<int32, [2]>([1, 1])];\n"
+        "    tensor<int32, [4]> c_pd = const()[name=string(\"c_pd\"), val=tensor<int32, [4]>([0, 0, 0, 0])];\n"
+        "    tensor<int32, [2]> c_dl = const()[name=string(\"c_dl\"), val=tensor<int32, [2]>([1, 1])];\n"
+        "    int32 c_gr = const()[name=string(\"c_gr\"), val=int32(1)];\n"
+        "    string to16 = const()[name=string(\"to16\"), val=string(\"fp16\")];\n"
+        "    tensor<fp16, [1, %d, 1, %d]> x16 = cast(dtype=to16, x=x)[name=string(\"cin\")];\n",
+        ch, sp, ch, sp);
+
+    size_t cs = 64 + (size_t)ch * ch * 2;
+    for (int i = 0; i < depth; i++) {
+        const char *prev = (i == 0) ? "x16" : NULL;
+        char prev_buf[16];
+        if (i > 0) { snprintf(prev_buf, sizeof(prev_buf), "c%d", i - 1); prev = prev_buf; }
+
+        pos += snprintf(buf + pos, bufsize - pos,
+            "    tensor<fp16, [%d, %d, 1, 1]> W%d = const()[name=string(\"W%d\"), "
+            "val=tensor<fp16, [%d, %d, 1, 1]>(BLOBFILE(path=string(\"%s\"), offset=uint64(%zu)))];\n"
+            "    tensor<fp16, [1, %d, 1, %d]> c%d = conv(dilations=c_dl, groups=c_gr, "
+            "pad=c_pd, pad_type=c_pt, strides=c_st, weight=W%d, x=%s)[name=string(\"c%d\")];\n",
+            ch, ch, i, i, ch, ch, weight_name, (size_t)(64 + i * cs),
+            ch, sp, i, i, prev, i);
+    }
+
+    char last[16];
+    snprintf(last, sizeof(last), "c%d", depth - 1);
+    pos += snprintf(buf + pos, bufsize - pos,
+        "    string to32 = const()[name=string(\"to32\"), val=string(\"fp32\")];\n"
+        "    tensor<fp32, [1, %d, 1, %d]> y = cast(dtype=to32, x=%s)[name=string(\"cout\")];\n"
+        "  } -> (y);\n}\n",
+        ch, sp, last);
+
+    return buf;
+}
+
 // ===== MIL Generation =====
 
 char *ane_mil_header(void) {

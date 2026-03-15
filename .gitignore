@@ -37,6 +37,10 @@ __pycache__/
 # Compiled binaries
 libane/test_ane
 examples/demo_train
+examples/bench
+examples/generate
+examples/explore
+*.dSYM
 
 # Temp
 /tmp/

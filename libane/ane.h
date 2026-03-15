@@ -167,6 +167,13 @@ void ane_weight_free(ANEWeight *w);
 // Input: [1, in_ch, 1, seq] fp32 → Output: [1, out_ch, 1, seq] fp32
 char *ane_mil_linear(int in_ch, int out_ch, int seq, const char *weight_name);
 
+// Generate MIL for N stacked 1x1 convolutions (for benchmarks). Caller frees.
+// Input/Output: [1, ch, 1, sp] fp32
+char *ane_mil_stacked_conv(int ch, int sp, int depth, const char *weight_name);
+
+// Build multi-chunk weight blob with random FP16 data for stacked conv. Caller frees .data.
+ANEWeight ane_weight_stacked(const char *name, int ch, int depth);
+
 // Generate MIL header (program declaration + buildInfo).
 char *ane_mil_header(void);
 
