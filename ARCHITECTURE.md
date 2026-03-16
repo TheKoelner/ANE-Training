@@ -2,12 +2,11 @@
 
 ## Was ist das hier?
 
-Dieses Projekt ist in zwei Teile aufgeteilt:
+Dieses Dokument beschreibt die 4-Schichten-Architektur hinter dem Projekt — von der Forschung bis zur fertigen Anwendung. Es zeigt, wie alles zusammenhängt und warum bestimmte Entscheidungen getroffen wurden.
 
-1. **Die Platform** (dieses Dokument) — alles was wir über Apples Neural Engine herausgefunden und gebaut haben. Das ist die Basis, auf der beliebige Lösungen aufgebaut werden können.
-2. **Die Lösung** (`personal-ai/`) — eine konkrete Anwendung, die auf der Platform aufbaut: ein persönlicher KI-Assistent der lokal auf deinem Mac lernt.
+Das öffentliche Repository enthält **Schicht 1 (Forschung) und Schicht 2 (libane)** mit lauffähigen Demos. Schicht 3 (Training-Pipeline) basiert auf [maderix/ANE](https://github.com/maderix/ANE) und wird hier referenziert. Schicht 4 (Personal AI) ist ein separates Projekt das auf der Platform aufbaut.
 
-Die Platform ist wiederverwendbar. Man könnte darauf auch einen Code-Assistenten, einen Log-Analyzer, einen lokalen Chatbot oder einen Bild-Classifier bauen.
+Die Platform ist wiederverwendbar. Man könnte darauf einen Code-Assistenten, einen Log-Analyzer, einen lokalen Chatbot oder einen Bild-Classifier bauen.
 
 ---
 
@@ -80,7 +79,6 @@ model.mil → model.bc.mlir → model.llir.bundle → model.hwx
 - `RESEARCH_ANE_COMPLETE.md` — Vollständige Forschungsdoku (Benchmarks, API-Surface, Constraints, Quellen)
 - `SUMMARY_TECHNICAL.md` — Technische Zusammenfassung des maderix/ANE Repos
 - `SUMMARY_SIMPLE.md` — Nicht-technische Zusammenfassung mit Use-Cases
-- `repo/test_advanced.m` — Unsere API-Probe-Tests (Chaining, QoS, Buffer, PerfStats)
 
 ---
 
@@ -174,8 +172,10 @@ ane_weight_free(&w);
 
 ## Schicht 3: Training Pipeline
 
+> **Hinweis:** Schicht 3 basiert auf dem [maderix/ANE](https://github.com/maderix/ANE) Repo und ist nicht in diesem Repository enthalten. Dieses Kapitel dokumentiert unsere Erkenntnisse und Anpassungen.
+
 ### Was wir nutzen
-Das maderix/ANE Repo (`repo/training/training_dynamic/`) — ein funktionierender Transformer-Trainer der direkt auf dem ANE läuft.
+Das maderix/ANE Repo (`training/training_dynamic/`) — ein funktionierender Transformer-Trainer der direkt auf dem ANE läuft.
 
 ### Was wir angepasst haben
 - Dashboard-TFLOPS: 15.8 (M4) → 9.36 (M3 Pro)
@@ -220,7 +220,7 @@ Inside ANE-Kernel:
 
 ## Schicht 4: Lösung (Personal AI)
 
-→ Siehe `personal-ai/README.md`
+> **Hinweis:** Schicht 4 ist ein separates Projekt und nicht in diesem Repository enthalten.
 
 Die Lösung baut auf ALLEN drei darunterliegenden Schichten auf:
 - **Schicht 1** (Forschung) lieferte das Wissen über QoS, Vocab-Compaction, Constraints
@@ -229,7 +229,7 @@ Die Lösung baut auf ALLEN drei darunterliegenden Schichten auf:
 
 ---
 
-## Dateistruktur
+## Dateistruktur (dieses Repository)
 
 ```
 ANE-Training/
@@ -238,31 +238,26 @@ ANE-Training/
 ├── RESEARCH_ANE_COMPLETE.md     ← Volle Forschungs-Doku
 ├── SUMMARY_TECHNICAL.md         ← Technische Zusammenfassung
 ├── SUMMARY_SIMPLE.md            ← Einfache Zusammenfassung
+├── LICENSE                      ← MIT
+├── install.sh                   ← One-Liner Installer
 │
-├── libane/                      ← SCHICHT 2: Unsere C-API
-│   ├── ane.h                    ← Stabile API-Schnittstelle
-│   ├── ane.m                    ← Implementierung mit Version-Detection
-│   ├── libane.dylib             ← Kompilierte Shared Library
-│   ├── test_ane.c               ← Tests (3/3 bestanden)
+├── examples/                    ← Lauffähige Demos
+│   ├── demo_train.c             ← ANE Training Demo (make demo)
+│   ├── bench.c                  ← Auto-Benchmark (make bench)
+│   ├── generate.c               ← Text Generation (make generate)
+│   ├── explore.m                ← ANE Explorer (make explore)
 │   └── Makefile
 │
-├── repo/                        ← SCHICHT 3: maderix/ANE (Referenz + Training)
-│   ├── bridge/                  ← Original ANE-Bridge (4 Klassen)
-│   ├── training/                ← Training-Code
-│   │   └── training_dynamic/    ← Dynamic-Pipeline (was wir nutzen)
-│   ├── test_advanced.m          ← Unsere API-Tests
-│   ├── inmem_bench.m            ← Performance-Benchmarks
-│   ├── sram_bench.m             ← SRAM-Probing
-│   └── ane_int8_bench.m         ← INT8-Benchmarks
-│
-└── personal-ai/                 ← SCHICHT 4: Lösung (Personal AI)
-    ├── README.md                ← Lösungs-Dokumentation
-    ├── pai                      ← CLI Entry-Point
-    ├── collector/               ← Daten-Sammlung
-    ├── tokenizer/               ← Tokenisierung
-    ├── trainer/                 ← Training-Scheduler
-    └── inference/               ← Query-Interface
+└── libane/                      ← Unsere C-API
+    ├── ane.h                    ← Stabile API-Schnittstelle
+    ├── ane.m                    ← Implementierung mit Version-Detection
+    ├── test_ane.c               ← Test-Suite
+    ├── README.md                ← API-Dokumentation
+    └── Makefile
 ```
+
+### Externe Referenzen (nicht in diesem Repo)
+- **[maderix/ANE](https://github.com/maderix/ANE)** — Schicht 3: Training-Pipeline mit Dynamic Spatial Packing
 
 ---
 
@@ -273,7 +268,7 @@ ANE-Training/
 | Phase A | API-Tests & Probing | Wissen was die ANE-Hardware kann | 35 Klassen, QoS-Levels, h15g-Identität |
 | Phase B | libane gebaut | Stabile, version-sichere API | ane.h/ane.m, 3/3 Tests bestanden |
 | Phase C | Training verifiziert | Beweis dass es auf M3 Pro funktioniert | 91-183ms/step, 50 Steps stabil |
-| Phase D | Personal AI gebaut | Konkrete Anwendung | Collect→Tokenize→Train→Query Pipeline |
+| Phase D | Personal AI gebaut | Konkrete Anwendung | Collect→Tokenize→Train→Query Pipeline (separates Projekt) |
 
 ## Was kann man noch darauf bauen?
 

@@ -33,6 +33,8 @@ ANEAPIInfo api = ane_api_info();
 
 ### Kompilierung & Evaluation
 
+**Hinweis:** `@model_path/weights/...` ist ein symbolischer Name, kein Dateipfad. Er verbindet Weight-Blobs im MIL-Programm mit den tatsächlichen Daten im Speicher. Der Name muss im MIL-Code und beim `ane_weight_*`-Aufruf übereinstimmen — der ANE-Compiler löst die Zuordnung auf.
+
 ```c
 // Weight-Blob bauen (float32 → ANE FP16 Format)
 ANEWeight w = ane_weight_fp16("@model_path/weights/w.bin", float_data, rows, cols);

@@ -64,27 +64,21 @@ fi
 
 # ===== Step 2: Clone =====
 echo ""
-INSTALL_DIR="$HOME/Code/ANE-Training"
+REPO_URL="https://github.com/slavko-at-klincov-it/ANE-Training.git"
+INSTALL_DIR="${ANE_INSTALL_DIR:-$(pwd)/ANE-Training}"
 
-if [ -d "$INSTALL_DIR" ]; then
+if [ -d "$INSTALL_DIR/.git" ]; then
     ok "ANE-Training already exists at $INSTALL_DIR"
     cd "$INSTALL_DIR"
 else
-    info "Cloning ANE-Training..."
+    info "Cloning ANE-Training to $INSTALL_DIR ..."
     mkdir -p "$(dirname "$INSTALL_DIR")"
     if [ -n "$ANE_REPO_URL" ]; then
-        git clone "$ANE_REPO_URL" "$INSTALL_DIR"
-    else
-        if command -v gh &>/dev/null; then
-            gh repo clone ANE-Training "$INSTALL_DIR" 2>/dev/null || {
-                warn "gh clone failed, using current directory..."
-                INSTALL_DIR="$(pwd)"
-            }
-        else
-            warn "No git remote configured. Using current directory."
-            INSTALL_DIR="$(pwd)"
-        fi
+        REPO_URL="$ANE_REPO_URL"
     fi
+    git clone "$REPO_URL" "$INSTALL_DIR" || {
+        fail "git clone failed. Install git or set ANE_REPO_URL to your fork."
+    }
     cd "$INSTALL_DIR"
     ok "Repository ready at $INSTALL_DIR"
 fi
