@@ -322,38 +322,90 @@ Deswegen kann TOPS höher sein als TFLOPS bei gleicher Hardware.
 
 ---
 
-## Chip-Vergleich — M3 Pro bis M5 Max
+## Chip-Vergleich — Alle Apple Silicon Generationen
 
-> Dieses Projekt wurde auf M3 Pro entwickelt. Auf neueren Chips ist **deutlich** mehr drin.
+> [!NOTE]
+> **Der ANE ist bei base/Pro/Max identisch.** Innerhalb einer Generation teilen sich alle Varianten denselben 16-Core Neural Engine. Pro/Max bringen nur mehr GPU-Cores und Memory-Bandwidth. **Nur Ultra verdoppelt den ANE** (32 Cores via UltraFusion). Memory-Bandwidth hilft dem ANE **nicht**, solange Tensoren im ~32MB On-Chip SRAM bleiben.
 
-| Chip | ANE TOPS | Mem BW | TFLOPS\* | INT8 | vs M3 Pro |
-|:---|---:|---:|---:|---:|:---|
-| **M3 Pro** | 18 | 150 GB/s | **9.4** | 1.0x | _Baseline_ |
-| **M4** | 38 | 120 GB/s | ~11 | 1.88x | **2x ANE** |
-| **M4 Pro** | 38 | 273 GB/s | ~11 | 1.88x | 2x ANE · 1.8x BW |
-| **M4 Max** | 38 | 546 GB/s | ~11 | 1.88x | 2x ANE · **3.6x BW** |
-| | | | | | |
-| **M5** | n/a | 153 GB/s | ~12–14† | TBD | GPU Neural Accelerators |
-| **M5 Pro** | n/a | 307 GB/s | ~12–14† | TBD | **2x BW** · 20 GPU NAs |
-| **M5 Max** | n/a | 614 GB/s | ~12–14† | TBD | **4x BW** · 40 GPU NAs |
+### Alle Generationen
 
-<sub>\* Neural Engine allein (FP16). M4-Wert aus maderix/ANE Dashboard.</sub><br>
-<sub>† Schätzung basierend auf M3→M4 Trend und Apples "faster Neural Engine" Angabe.</sub>
+| Chip | Arch | ANE TOPS | Mem BW | TFLOPS\* | INT8 | SRAM |
+|:---|:---|---:|---:|---:|:---|---:|
+| **M1** | H13 | 11 | 68 GB/s | ~5.5 | nur Weights | ~32 MB |
+| M1 Pro | H13 | 11 | 200 GB/s | ~5.5 | nur Weights | ~32 MB |
+| M1 Max | H13 | 11 | 400 GB/s | ~5.5 | nur Weights | ~32 MB |
+| M1 Ultra | H13 x2 | **22** | 800 GB/s | ~11 | nur Weights | ~64 MB |
+| | | | | | | |
+| **M2** | H14 | 15.8 | 100 GB/s | ~8 | nur Weights | ~32 MB |
+| M2 Pro | H14 | 15.8 | 200 GB/s | ~9.0 | nur Weights | ~32 MB |
+| M2 Max | H14 | 15.8 | 400 GB/s | ~9.2 | nur Weights | ~32 MB |
+| M2 Ultra | H14 x2 | **31.6** | 800 GB/s | ~18 | nur Weights | ~64 MB |
+| | | | | | | |
+| **M3** | H15 | 18 | 100 GB/s | ~9.4 | nur Weights | ~32 MB |
+| **M3 Pro** | H15 (h15g) | 18 | 150 GB/s | **9.4** | 1.0–1.14x | ~32 MB |
+| M3 Max | H15 (h15p) | 18 | 300–400 GB/s | ~9.5 | nur Weights | ~32 MB |
+| M3 Ultra | H15 x2 | **36** | 819 GB/s | ~19 | nur Weights | ~64 MB |
+| | | | | | | |
+| **M4** | H16 (h16g) | **38** | 120 GB/s | ~11 | **1.88x (W8A8)** | ~32 MB |
+| M4 Pro | H16 (h16p) | **38** | 273 GB/s | ~12 | **1.88x (W8A8)** | ~32 MB |
+| M4 Max | H16 | **38** | 546 GB/s | ~11 | **1.88x (W8A8)** | ~32 MB |
+| | | | | | | |
+| **M5** | — | n/a | 153 GB/s | ~12–14† | TBD | ~32 MB |
+| M5 Pro | — | n/a | 307 GB/s | ~12–14† | TBD | ~32 MB |
+| M5 Max | — | n/a | 614 GB/s | ~12–14† | TBD | ~32 MB |
+
+<sub>\* Gemessene FP16 TFLOPS auf ANE (Conv 1x1). M2/M4-Werte aus maderix/ANE Benchmarks.</sub><br>
+<sub>† M5-ANE-Schätzung basierend auf M3→M4 Trend. Apple hat keine separaten ANE-TOPS veröffentlicht.</sub>
 
 <details>
-<summary><b>Was bedeutet das konkret?</b></summary>
+<summary><b>Was bedeutet "INT8 nur Weights" vs "W8A8"?</b></summary>
 
 &nbsp;
 
-**M4 / M4 Pro** — Der Neural Engine hat doppelt so viele TOPS (38 vs 18). Training-Steps die auf M3 Pro 91ms dauern, landen auf M4 bei **~45–55ms**. INT8-Quantisierung bringt 1.88x — damit wird INT8-Training realistisch (~25–30ms/step).
+**M1/M2/M3 (INT8 nur Weights):** Der ANE lädt INT8-Weights, aber **rechnet in FP16**. Das spart Speicher und Bandwidth, gibt aber **keinen Compute-Speedup**. Deswegen bringt INT8 auf M3 Pro nur 1.0–1.14x.
 
-**M4 Max** — Gleicher ANE wie M4 Pro, aber 546 GB/s Memory-Bandwidth. Bei großen Modellen (>16MB Weights) kein Bottleneck mehr durch Memory-Transfers.
+**M4+ (W8A8 = Weights AND Activations INT8):** Erst ab M4 (H16) können **beide** — Weights und Aktivierungen — in INT8 verarbeitet werden. Das verdoppelt den effektiven Durchsatz: **1.88x Speedup**. INT8-Training wird damit realistisch.
 
-**M5** _(Oktober 2025)_ — Apple hat keine separaten ANE-TOPS veröffentlicht. Die große Neuerung: **Fusion Architecture** — jeder GPU-Core hat einen eigenen **Neural Accelerator**. Gesamt-AI-Leistung laut Berichten: **~133 TOPS** (Neural Engine + GPU Neural Accelerators kombiniert).
+</details>
 
-**M5 Pro** _(März 2026)_ — 18-Core CPU, 20-Core GPU mit je einem Neural Accelerator, 307 GB/s. Apple: **4x schnelleres LLM Prompt Processing** vs M4 Pro.
+<details>
+<summary><b>Geschätzte Training-Performance pro Chip</b></summary>
 
-**M5 Max** _(März 2026)_ — 40-Core GPU (40 Neural Accelerators), **614 GB/s** — 4x die Memory-Bandwidth von M3 Pro. Für große Modelle ein Game-Changer.
+&nbsp;
+
+Basierend auf Stories110M (124 Vocab, compacted), gemessen auf M3 Pro = 91ms/step:
+
+| Chip | Geschätzt ms/step | INT8 ms/step | Faktor vs M3 Pro |
+|:---|---:|---:|:---|
+| M1 | ~160 ms | — | 0.6x |
+| M2 | ~105 ms | — | 0.9x |
+| **M3 Pro** | **91 ms** | — | _Baseline_ |
+| M3 Ultra | ~50 ms | — | 1.8x |
+| **M4** | **~45–55 ms** | **~25–30 ms** | **2x (4x mit INT8)** |
+| M4 Pro | ~45–55 ms | ~25–30 ms | 2x |
+| M4 Max | ~40–50 ms | ~22–28 ms | 2–2.5x |
+| M5 | ~35–45 ms | TBD | ~2.5x |
+| M5 Pro | ~35–45 ms | TBD | ~2.5x |
+| M5 Max | ~30–40 ms | TBD | ~3x |
+
+</details>
+
+<details>
+<summary><b>Optimierungstipps pro Generation</b></summary>
+
+&nbsp;
+
+**M1 (11 TOPS)** — Kleinster Durchsatz. Tensor-Tiling ist kritisch — halte Working Sets unter 24MB. FP16 nutzen, INT8 bringt nichts. QoS Background (9) bringt hier den größten relativen Gewinn.
+
+**M2 (15.8 TOPS)** — 44% schneller als M1, gleiche Constraints. Kein INT8-Compute-Vorteil. Gleiche SRAM-Limits (~32MB).
+
+**M3 / M3 Pro (18 TOPS)** — 14% über M2. Kein W8A8. Besonders flexible SRAM-Verwaltung (kein harter Cliff, gradueller Drop bis 73.5MB). Optimiere auf FP16, Conv 1x1 statt matmul.
+
+**M4 (38 TOPS)** — **Der große Sprung**: 2x TOPS, echtes W8A8 INT8. Training-Steps halbieren sich. INT8-Quantisierung lohnt sich erstmals. Gleicher ~32MB SRAM.
+
+**M5 (Fusion Architecture)** — ANE selbst leicht schneller, aber die GPU Neural Accelerators (10–40 pro Chip) sind der Game-Changer. Via Metal/MLX nutzbar, nicht via libane. Für maximale Performance: Hybrid ANE+GPU Ansatz.
+
+**Ultra-Varianten (M1–M3)** — Doppelter ANE (32 Cores, 2x TOPS). Einzige Variante wo Pro/Max → Ultra einen echten ANE-Unterschied macht. Beide Dies arbeiten parallel — ideal für größere Modelle die auf 16 Cores nicht passen.
 
 </details>
 
