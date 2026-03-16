@@ -734,6 +734,84 @@ char *ane_mil_linear(int in_ch, int out_ch, int seq, const char *weight_name) {
     return buf;
 }
 
+char *ane_mil_linear_dynamic(int in_ch, int out_ch, int seq) {
+    int total_ch = in_ch + in_ch * out_ch;
+    size_t bufsize = 4096;
+    char *buf = (char *)malloc(bufsize);
+    if (!buf) return NULL;
+    snprintf(buf, bufsize,
+        "program(1.3)\n"
+        "[buildInfo = dict<string, string>({{\"coremlc-component-MIL\", \"3510.2.1\"}, "
+        "{\"coremlc-version\", \"3505.4.1\"}, {\"coremltools-component-milinternal\", \"\"}, "
+        "{\"coremltools-version\", \"9.0\"}})]\n{\n"
+        "  func main<ios18>(tensor<fp32, [1, %d, 1, %d]> x) {\n"
+        "    string to16 = const()[name=string(\"to16\"), val=string(\"fp16\")];\n"
+        "    tensor<fp16, [1, %d, 1, %d]> xh = cast(dtype=to16, x=x)[name=string(\"cin\")];\n"
+        // Slice activations: [1, in_ch, 1, seq]
+        "    tensor<int32, [4]> b0 = const()[name=string(\"b0\"), val=tensor<int32, [4]>([0,0,0,0])];\n"
+        "    tensor<int32, [4]> sa = const()[name=string(\"sa\"), val=tensor<int32, [4]>([1,%d,1,%d])];\n"
+        "    tensor<fp16, [1,%d,1,%d]> act = slice_by_size(x=xh,begin=b0,size=sa)[name=string(\"act\")];\n"
+        // Slice weight: [1, in_ch*out_ch, 1, seq] — only spatial 0 matters
+        "    tensor<int32, [4]> bw = const()[name=string(\"bw\"), val=tensor<int32, [4]>([0,%d,0,0])];\n"
+        "    tensor<int32, [4]> sw = const()[name=string(\"sw\"), val=tensor<int32, [4]>([1,%d,1,1])];\n"
+        "    tensor<fp16, [1,%d,1,1]> wf = slice_by_size(x=xh,begin=bw,size=sw)[name=string(\"wf\")];\n"
+        // Reshape weight to [1, 1, out_ch, in_ch] for matmul
+        "    tensor<int32, [4]> ws = const()[name=string(\"ws\"), val=tensor<int32, [4]>([1,1,%d,%d])];\n"
+        "    tensor<fp16, [1,1,%d,%d]> W = reshape(shape=ws,x=wf)[name=string(\"W\")];\n"
+        // Reshape activations to [1, 1, in_ch, seq] then transpose to [1, 1, seq, in_ch]
+        "    tensor<int32, [4]> as2 = const()[name=string(\"as2\"), val=tensor<int32, [4]>([1,1,%d,%d])];\n"
+        "    tensor<fp16, [1,1,%d,%d]> a2 = reshape(shape=as2,x=act)[name=string(\"a2\")];\n"
+        "    tensor<int32, [4]> pm = const()[name=string(\"pm\"), val=tensor<int32, [4]>([0,1,3,2])];\n"
+        "    tensor<fp16, [1,1,%d,%d]> a3 = transpose(perm=pm,x=a2)[name=string(\"a3\")];\n"
+        // matmul: [1,1,seq,in_ch] @ [1,1,in_ch,out_ch] → but W is [1,1,out_ch,in_ch]
+        // We need W transposed, so transpose_y=true
+        "    bool bF = const()[name=string(\"bF\"), val=bool(false)];\n"
+        "    bool bT = const()[name=string(\"bT\"), val=bool(true)];\n"
+        "    tensor<fp16, [1,1,%d,%d]> yh = matmul(transpose_x=bF,transpose_y=bT,x=a3,y=W)[name=string(\"mm\")];\n"
+        // Transpose back: [1,1,seq,out_ch] → [1,1,out_ch,seq]
+        "    tensor<fp16, [1,1,%d,%d]> yt = transpose(perm=pm,x=yh)[name=string(\"yt\")];\n"
+        // Reshape to [1, out_ch, 1, seq]
+        "    tensor<int32, [4]> os = const()[name=string(\"os\"), val=tensor<int32, [4]>([1,%d,1,%d])];\n"
+        "    tensor<fp16, [1,%d,1,%d]> yr = reshape(shape=os,x=yt)[name=string(\"yr\")];\n"
+        "    string to32 = const()[name=string(\"to32\"), val=string(\"fp32\")];\n"
+        "    tensor<fp32, [1,%d,1,%d]> y = cast(dtype=to32,x=yr)[name=string(\"cout\")];\n"
+        "  } -> (y);\n}\n",
+        total_ch, seq,             // input shape
+        total_ch, seq,             // cast shape
+        in_ch, seq,                // sa (activation slice size)
+        in_ch, seq,                // act shape
+        in_ch,                     // bw (weight begin channel)
+        in_ch * out_ch,            // sw (weight slice size)
+        in_ch * out_ch,            // wf shape
+        out_ch, in_ch,             // ws (reshape target)
+        out_ch, in_ch,             // W shape
+        in_ch, seq,                // as2 (reshape target)
+        in_ch, seq,                // a2 shape
+        seq, in_ch,                // a3 shape (transposed)
+        seq, out_ch,               // yh shape (matmul output)
+        out_ch, seq,               // yt shape (transposed back)
+        out_ch, seq,               // os (reshape target)
+        out_ch, seq,               // yr shape
+        out_ch, seq);              // y shape (output)
+    return buf;
+}
+
+void ane_write_dynamic_weights(ANEKernel *k, int idx, const float *W,
+                                int in_ch, int out_ch, int seq) {
+    if (!k || idx < 0 || idx >= k->nIn) return;
+    IOSurfaceLock(k->ioIn[idx], 0, NULL);
+    float *ptr = (float *)IOSurfaceGetBaseAddress(k->ioIn[idx]);
+    // Weight W[out_ch][in_ch] → packed at channels [in_ch..in_ch+out_ch*in_ch], spatial 0
+    // Layout: channel (in_ch + i*in_ch + j), spatial 0
+    // In memory: ptr[(in_ch + i*in_ch + j) * seq + 0]
+    for (int i = 0; i < out_ch; i++) {
+        for (int j = 0; j < in_ch; j++) {
+            ptr[(in_ch + i * in_ch + j) * seq + 0] = W[i * in_ch + j];
+        }
+    }
+    IOSurfaceUnlock(k->ioIn[idx], 0, NULL);
+}
+
 // ===== Lifecycle =====
 
 int ane_compile_count(void) { return g_compiles; }

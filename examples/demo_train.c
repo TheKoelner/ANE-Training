@@ -64,15 +64,30 @@ int main(void) {
     printf("Goal: Train W so that Y = W @ X approximates Y = 2*X\n");
     printf("      W starts random, should converge to 2*Identity\n\n");
 
-    size_t io_bytes = DIM * SEQ * 4; // fp32 I/O
+    // Dynamic linear: weights packed in input IOSurface → compile ONCE
+    int total_ch = DIM + DIM * DIM;
+    size_t in_bytes = (size_t)total_ch * SEQ * 4;
+    size_t out_bytes = (size_t)DIM * SEQ * 4;
 
-    // ===== Step 3: Training loop =====
+    // ===== Step 3: Compile kernel ONCE =====
+    char *mil = ane_mil_linear_dynamic(DIM, DIM, SEQ);
+    ANEKernel *k = ane_compile(mil, strlen(mil), NULL, 0,
+                               1, &in_bytes, 1, &out_bytes,
+                               ANE_QOS_BACKGROUND);
+    if (!k) {
+        printf("Compile failed\n");
+        free(mil);
+        return 1;
+    }
+    printf("Compiled once (dynamic weights, no recompilation needed)\n\n");
+
+    // ===== Step 4: Training loop =====
     float input[DIM * SEQ];
     float output[DIM * SEQ];
     float target[DIM * SEQ];
     float grad_W[DIM * DIM];
 
-    // Fixed training data (same every step for clean convergence)
+    // Fixed training data
     for (int i = 0; i < DIM * SEQ; i++) input[i] = randf();
     for (int i = 0; i < DIM * SEQ; i++) target[i] = 2.0f * input[i];
 
@@ -81,31 +96,33 @@ int main(void) {
 
     for (int step = 0; step < STEPS; step++) {
 
-        // --- Forward pass on ANE ---
-        ANEWeight w = ane_weight_fp16("@model_path/weights/weight.bin", W, DIM, DIM);
-        char *mil = ane_mil_linear(DIM, DIM, SEQ, "@model_path/weights/weight.bin");
-        ANEKernel *k = ane_compile(mil, strlen(mil), &w, 1,
-                                   1, &io_bytes, 1, &io_bytes,
-                                   ANE_QOS_BACKGROUND);
-        if (!k) {
-            printf("Compile failed at step %d (budget: %d/%d)\n",
-                   step, ane_compile_count(), ANE_COMPILE_BUDGET);
-            free(mil);
-            ane_weight_free(&w);
-            break;
-        }
+        // --- Forward pass on ANE (zero recompilation) ---
+        // Pack activations + weights into input IOSurface
+        ane_lock_input(k, 0);
+        float *in_ptr = (float *)ane_input_ptr(k, 0);
+        memset(in_ptr, 0, in_bytes);
+        // Activations: channels [0..DIM)
+        for (int c = 0; c < DIM; c++)
+            for (int s = 0; s < SEQ; s++)
+                in_ptr[c * SEQ + s] = input[c * SEQ + s];
+        // Weights: channels [DIM..DIM+DIM*DIM), spatial 0 only
+        for (int i = 0; i < DIM; i++)
+            for (int j = 0; j < DIM; j++)
+                in_ptr[(DIM + i * DIM + j) * SEQ + 0] = W[i * DIM + j];
+        ane_unlock_input(k, 0);
 
         struct timespec t0, t1;
         clock_gettime(CLOCK_MONOTONIC, &t0);
 
-        ane_write(k, 0, input, io_bytes);
         ane_eval(k, ANE_QOS_BACKGROUND);
-        ane_read(k, 0, output, io_bytes);
 
         clock_gettime(CLOCK_MONOTONIC, &t1);
         double ms = (t1.tv_sec - t0.tv_sec) * 1000.0 + (t1.tv_nsec - t0.tv_nsec) / 1e6;
 
-        // FP16 overflow protection: sanitize ANE output
+        // Read output
+        ane_read(k, 0, output, out_bytes);
+
+        // FP16 overflow protection
         for (int i = 0; i < DIM * SEQ; i++) {
             if (isnan(output[i]) || isinf(output[i])) output[i] = 0.0f;
         }
@@ -150,11 +167,10 @@ int main(void) {
             printf("%-4d   %8.4f   %6.3f   %6.3f   %.1f\n",
                    step, loss, W[0], W[DIM + 1], ms);
         }
-
-        ane_free(k);
-        free(mil);
-        ane_weight_free(&w);
     }
+
+    ane_free(k);
+    free(mil);
 
     // ===== Step 4: Show result =====
     printf("\n=== Result ===\n");

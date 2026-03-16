@@ -163,9 +163,21 @@ void ane_weight_free(ANEWeight *w);
 
 // ===== MIL Generation Helpers =====
 
-// Generate MIL for a linear layer (1x1 conv). Caller frees returned string.
+// Generate MIL for a linear layer (1x1 conv, weights baked at compile time).
 // Input: [1, in_ch, 1, seq] fp32 → Output: [1, out_ch, 1, seq] fp32
 char *ane_mil_linear(int in_ch, int out_ch, int seq, const char *weight_name);
+
+// Generate MIL for a dynamic linear layer (weights packed in input, NO recompilation needed).
+// Input: [1, in_ch + in_ch*out_ch, 1, seq] fp32 → Output: [1, out_ch, 1, seq] fp32
+// Pack activations in channels [0..in_ch), weights in channels [in_ch..in_ch+in_ch*out_ch).
+// Weight layout: W[i][j] at channel (in_ch + i*in_ch + j), spatial position 0.
+// Compile once, then update weights via IOSurface writes — zero recompilation.
+char *ane_mil_linear_dynamic(int in_ch, int out_ch, int seq);
+
+// Write a weight matrix into the input IOSurface for dynamic linear layers.
+// Packs W[out_ch][in_ch] into the correct channel/spatial layout.
+void ane_write_dynamic_weights(ANEKernel *k, int idx, const float *W,
+                                int in_ch, int out_ch, int seq);
 
 // Generate MIL for N stacked 1x1 convolutions (for benchmarks). Caller frees.
 // Input/Output: [1, ch, 1, sp] fp32
