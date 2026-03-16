@@ -104,29 +104,31 @@ Prüft Voraussetzungen, klont, baut, benchmarked.
 
 ```bash
 git clone https://github.com/slavko-at-klincov-it/ANE-Training.git
-cd ANE-Training/examples
-make demo
+cd ANE-Training
+./ane
 ```
 
-`libane` wird automatisch mit-kompiliert.
+Interaktives Menü — baut alles automatisch.
 
 </td>
 </tr>
 </table>
 
 > [!TIP]
-> Du musst libane **nicht** separat bauen. Einzeln testen: `cd libane && make test`
+> `./ane` erkennt deine Hardware, baut alle Binaries beim ersten Start, und führt dich durch alles. Du brauchst keine Makefiles oder Pfade zu kennen.
 
 ---
 
 ## Schnellstart
 
 ```bash
-cd examples
-make demo       # Training Demo (Y=2X, 60 Steps, 1 Compile)
-make bench      # Auto-Benchmark + ASCII Chart
-make generate   # Shakespeare Text-Generation auf ANE
-make explore    # 35 ANE-Klassen interaktiv erforschen
+./ane                # Interaktives Menü
+./ane train          # Training Demo (Y=2X, 1 Compile, 60 Steps)
+./ane bench          # Auto-Benchmark (TFLOPS + Chip-Vergleich)
+./ane generate       # Shakespeare Text-Generation auf ANE
+./ane explore        # 35 ANE-Klassen interaktiv erkunden
+./ane info           # Hardware-Erkennung
+./ane test           # libane Test-Suite
 ```
 
 <details open>
@@ -600,6 +602,7 @@ Training Step = 91ms:
 ```
 ANE-Training/
 │
+├── ane ······························· CLI Entry-Point (./ane)
 ├── README.md ·························· Dieses Dokument
 ├── ARCHITECTURE.md ···················· 4-Schichten Platform-Architektur
 ├── ROADMAP.md ························· Optimierungsplan (P0 erledigt)
