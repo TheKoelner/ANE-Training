@@ -1,99 +1,146 @@
-# ANE-Training — Apple Neural Engine Research & API
+<div align="center">
 
-Reverse-Engineering von Apples privatem Neural Engine Framework. Enthält eine eigenständige C-API (`libane`), vollständige Hardware-Forschung, und Benchmark-Ergebnisse für M3 Pro.
+```
+     ___    _   __ ______
+    /   |  / | / // ____/
+   / /| | /  |/ // __/
+  / ___ |/ /|  // /___
+ /_/  |_/_/ |_//_____/  Training
+
+ ┌─────────────────────────────────────────┐
+ │  Reverse-Engineering Apples             │
+ │  Neural Engine für Training             │
+ │                                         │
+ │  35 Klassen · 9.4 TFLOPS · 73KB API    │
+ └─────────────────────────────────────────┘
+```
+
+**Die erste eigenständige C-API für Apples privaten Neural Engine.**<br>
+Vollständige Hardware-Forschung. Lauffähige Demos. Benchmark-Suite.
+
+[![License: MIT](https://img.shields.io/badge/Lizenz-MIT-green.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/Platform-macOS_15+-black.svg?logo=apple)](https://www.apple.com/macos/)
+[![Chip](https://img.shields.io/badge/Chip-Apple_Silicon-FF6B6B.svg)](https://support.apple.com/en-us/116943)
+[![API](https://img.shields.io/badge/libane-73KB_Shared_Library-blue.svg)](libane/)
+[![ANE Classes](https://img.shields.io/badge/ANE_Klassen-35_entdeckt-orange.svg)](RESEARCH_ANE_COMPLETE.md)
+[![Peak](https://img.shields.io/badge/Peak-9.4_TFLOPS_(FP16)-red.svg)](#-benchmark-ergebnisse-m3-pro)
+
+</div>
+
+---
 
 ## Was ist das?
 
-Apple Silicon Chips (M1-M4) haben einen **Neural Engine (ANE)** — einen 16-Core KI-Beschleuniger mit bis zu 18 TOPS (Tera Operations Per Second). Apple beschränkt ihn offiziell auf Inference via CoreML. Dieses Projekt knackt diese Beschränkung auf und ermöglicht **Training** direkt auf dem ANE.
+Apple Silicon Chips (M1–M5) haben einen **Neural Engine (ANE)** — einen 16-Core KI-Beschleuniger mit bis zu 38 TOPS. Apple beschränkt ihn offiziell auf Inference via CoreML. Dieses Projekt knackt diese Beschränkung und ermöglicht **Training direkt auf dem ANE**.
 
-### Was wir entdeckt haben
+<table>
+<tr>
+<td width="50%">
 
-- **35 private API-Klassen** (bekannte Projekte nutzen nur 4)
-- **6 QoS-Level** — Background (9) ist 42% schneller als Default (21)
-- **Hardware-Identität**: M3 Pro = `h15g`, 16 Cores, Board 192
-- **Compilation-Pipeline**: MIL → MLIR → LLIR → HWX (siehe [Glossar](#glossar))
-- **Performance**: 9.36 TFLOPS (FP16), 18.23 TOPS (large spatial)
-- **INT8 lohnt nicht auf M3 Pro** (nur 1.0-1.14x, auf M4: 1.88x)
-- **Conv 1x1 ist 3x schneller als matmul** auf ANE
+### Entdeckungen
 
-### Was wir gebaut haben
+| | |
+|---|---|
+| **35** | private API-Klassen (bekannt: nur 4) |
+| **6** | QoS-Level — Background ist 42% schneller |
+| **h15g** | Hardware-ID des M3 Pro, 16 Cores |
+| **9.4** | TFLOPS Peak (FP16) |
+| **3x** | Conv 1x1 schneller als matmul |
 
-**`libane`** — eine eigene C-API mit automatischer Version-Detection:
-- Überlebt Apple API-Änderungen (probiert alternative Klassen-/Methoden-Namen)
-- Device-Erkennung, QoS-Support, Zero-Copy I/O
-- MIL-Code-Generierung, Weight-Blob-Builder
-- 73KB Shared Library, alle Tests bestanden
+</td>
+<td width="50%">
+
+### libane — Unsere C-API
+
+| | |
+|---|---|
+| **73 KB** | Shared Library |
+| **Auto** | Version-Detection |
+| **Zero-Copy** | I/O via IOSurface |
+| **6 QoS** | Prioritätsstufen |
+| **MIL** | Code-Generierung |
+
+</td>
+</tr>
+</table>
+
+> [!NOTE]
+> **Compilation-Pipeline:** `MIL → MLIR → LLIR → HWX` — siehe [Glossar](#-glossar) für alle Fachbegriffe.
 
 ---
 
 ## Voraussetzungen
 
-Bevor du loslegst, stelle sicher dass du Folgendes hast:
-
-| Was | Minimum | Geprüft mit |
-|-----|---------|-------------|
-| Mac | Apple Silicon (M1, M2, M3, M4) | M3 Pro |
+| Was | Minimum | Getestet mit |
+|:---|:---|:---|
+| Mac | Apple Silicon (M1–M5) | M3 Pro |
 | macOS | 15+ | 26.3.1 (Build 25D2128) |
 | Xcode CLI Tools | Erforderlich | `xcode-select --install` |
 
-**Prüfen ob alles da ist:**
-
 ```bash
-# Apple Silicon?
-uname -m          # muss "arm64" ausgeben
-
-# Xcode CLI Tools installiert?
-xcode-select -p   # muss einen Pfad zeigen, z.B. /Library/Developer/CommandLineTools
-
-# Falls nicht installiert:
-xcode-select --install
+uname -m           # → "arm64"
+xcode-select -p    # → /Library/Developer/CommandLineTools
 ```
 
+> [!WARNING]
 > **Intel Mac?** Dieses Projekt funktioniert **nur** auf Apple Silicon. Der Neural Engine existiert nur in M-Serie Chips.
 
 ---
 
 ## Installation
 
-### Option A: Schnell (One-Liner)
+<table>
+<tr>
+<td width="50%">
+
+**Option A — One-Liner**
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/slavko-at-klincov-it/ANE-Training/main/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/\
+slavko-at-klincov-it/ANE-Training/\
+main/install.sh | bash
 ```
 
-Das Skript prüft automatisch alle Voraussetzungen, klont das Repo, baut alles, und führt einen Benchmark aus.
+Prüft Voraussetzungen, klont, baut, benchmarked.
 
-### Option B: Manuell (Schritt für Schritt)
+</td>
+<td width="50%">
+
+**Option B — Manuell**
 
 ```bash
-# 1. Repo klonen
 git clone https://github.com/slavko-at-klincov-it/ANE-Training.git
-cd ANE-Training
-
-# 2. Erste Demo starten (libane wird automatisch mit-kompiliert)
-cd examples
+cd ANE-Training/examples
 make demo
 ```
 
-> **Hinweis:** Du musst libane **nicht** separat bauen. Das Examples-Makefile kompiliert `ane.m` direkt mit. Wenn du libane einzeln testen willst: `cd libane && make test`
+`libane` wird automatisch mit-kompiliert.
+
+</td>
+</tr>
+</table>
+
+> [!TIP]
+> Du musst libane **nicht** separat bauen. Einzeln testen: `cd libane && make test`
 
 ---
 
 ## Schnellstart
 
-Alle Demos liegen im `examples/`-Ordner:
-
 ```bash
 cd examples
-make demo       # ANE Training Demo (Y=2X, 60 Steps)
-make bench      # Auto-Benchmark mit TFLOPS + ASCII Chart
-make generate   # Shakespeare Text-Generation auf ANE
-make explore    # ANE Framework Explorer (35 Klassen, interaktiv)
+make demo       # ← Training Demo (Y=2X, 60 Steps)
+make bench      # ← Auto-Benchmark + ASCII Chart
+make generate   # ← Shakespeare auf ANE
+make explore    # ← 35 ANE-Klassen interaktiv
 ```
 
-### 1. Training Demo — `make demo`
+<details open>
+<summary><b>Training Demo</b> — <code>make demo</code></summary>
 
-Trainiert einen Linear-Layer direkt auf dem ANE. Forward-Pass auf dem Neural Engine, Backward-Pass + SGD auf der CPU.
+&nbsp;
+
+Trainiert einen Linear-Layer direkt auf dem ANE. Forward auf Neural Engine, Backward + SGD auf CPU.
 
 ```
 Hardware: h15g, 16 ANE cores
@@ -107,67 +154,87 @@ step   loss       W[0,0]   W[1,1]   ms/step
 Diagonal average: 1.955 (converged!)
 ```
 
-**Was passiert hier?** Die Gewichte (Weights) starten zufällig und werden Schritt für Schritt angepasst, bis `W ≈ 2.0`. Der Loss sinkt von 1.47 auf 0.001 — das Modell hat gelernt.
+Die Gewichte starten zufällig und konvergieren zu `W ≈ 2.0`. Loss: 1.47 → 0.001.
 
-### 2. Auto-Benchmark — `make bench`
+</details>
 
-Erkennt deinen Chip, misst TFLOPS über verschiedene Konfigurationen, zeigt ein ASCII-Barchart mit Vergleich zu bekannten Chips.
+<details>
+<summary><b>Auto-Benchmark</b> — <code>make bench</code></summary>
 
-```
-  Chip:   h15g (M3 Pro), 16 cores
+&nbsp;
 
-  ---- Single Conv Sweep (1x1 conv, ch x ch) ----
-  256x256 sp64     0.1 MB   2.10  0.284 ms    7.38
-  4096x4096 sp64  32.0 MB  34.36  3.841 ms    8.94
-
-  ---- Peak Sustained (Stacked Conv) ----
-  128x stacked     32.0 MB  34.36  3.647 ms    9.42
-
-  ---- Performance Overview ----
-  >> h15g (M3 Pro)        9.42 TFLOPS  ████████████████████████████░░
-     h16g (M4)           11.00 TFLOPS  █████████████████████████████░
-```
-
-### 3. Text Generation — `make generate`
-
-Trainiert ein Bigram-Modell auf Shakespeare-Text, generiert dann Zeichen-für-Zeichen mit Typewriter-Effekt.
+Erkennt deinen Chip, misst TFLOPS, zeigt Vergleich:
 
 ```
-  Training bigram model on Shakespeare...
-  step   loss      perplexity
-  0       4.1589   64.00
-  29      3.1245   22.76
+Chip:   h15g (M3 Pro), 16 cores
 
-  Generating text (200 chars, temperature=0.8)...
-  To be or not to be, that is the question...
+---- Single Conv Sweep (1x1 conv, ch x ch) ----
+256x256 sp64     0.1 MB   2.10  0.284 ms    7.38
+4096x4096 sp64  32.0 MB  34.36  3.841 ms    8.94
+
+---- Peak Sustained (Stacked Conv) ----
+128x stacked     32.0 MB  34.36  3.647 ms    9.42
+
+---- Performance Overview ----
+>> h15g (M3 Pro)        9.42 TFLOPS  ████████████████████████████░░
+   h16g (M4)           11.00 TFLOPS  █████████████████████████████░
 ```
 
-### 4. ANE Explorer — `make explore`
+</details>
 
-Zeigt alle 35 ANE-Klassen kategorisiert, markiert welche libane nutzt, interaktiver Modus.
+<details>
+<summary><b>Text Generation</b> — <code>make generate</code></summary>
+
+&nbsp;
+
+Bigram-Modell auf Shakespeare, Typewriter-Ausgabe:
 
 ```
-  Found 35 ANE classes
+Training bigram model on Shakespeare...
+step   loss      perplexity
+0       4.1589   64.00
+29      3.1245   22.76
 
-  ┌─ Core (Model compilation, loading, evaluation)
-  │  █ _ANEInMemoryModel
-  │  █ _ANEInMemoryModelDescriptor
-  │  █ _ANERequest
-  └─
-
-  Interactive Mode: Enter a class name to inspect
-  > _ANEInMemoryModel
-  Instance Methods (23):
-    - compileWithQoS:options:error:
-    - loadWithQoS:options:error:
-    ...
+Generating text (200 chars, temperature=0.8)...
+To be or not to be, that is the question...
 ```
+
+</details>
+
+<details>
+<summary><b>ANE Explorer</b> — <code>make explore</code></summary>
+
+&nbsp;
+
+Alle 35 ANE-Klassen kategorisiert, interaktive Inspektion:
+
+```
+Found 35 ANE classes
+
+┌─ Core (Model compilation, loading, evaluation)
+│  █ _ANEInMemoryModel
+│  █ _ANEInMemoryModelDescriptor
+│  █ _ANERequest
+└─
+
+Interactive Mode: Enter a class name to inspect
+> _ANEInMemoryModel
+Instance Methods (23):
+  - compileWithQoS:options:error:
+  - loadWithQoS:options:error:
+  ...
+```
+
+</details>
 
 ---
 
-## Eigenen Code schreiben mit libane
+## Eigenen Code mit libane
 
-Hier ein vollständiges Beispiel — speichere es als `my_test.c`:
+<details>
+<summary><b>Vollständiges Beispiel anzeigen</b> — <code>my_test.c</code></summary>
+
+&nbsp;
 
 ```c
 #include <stdio.h>
@@ -186,8 +253,8 @@ int main() {
     ANEDeviceInfo info = ane_device_info();
     printf("ANE: %s, %d cores\n", info.arch, info.num_cores);
 
-    // 3. Gewichte vorbereiten (2x2 Matrix, alles 1.0)
-    float weights[] = {1.0f, 0.0f, 0.0f, 1.0f};  // Einheitsmatrix
+    // 3. Gewichte vorbereiten (2x2 Einheitsmatrix)
+    float weights[] = {1.0f, 0.0f, 0.0f, 1.0f};
     ANEWeight w = ane_weight_fp16("@model_path/weights/w.bin", weights, 2, 2);
 
     // 4. MIL-Programm generieren (Linear Layer: 2→2, Sequenzlänge 1)
@@ -217,7 +284,7 @@ int main() {
 }
 ```
 
-**Kompilieren und ausführen:**
+**Kompilieren:**
 
 ```bash
 xcrun clang -O2 -fobjc-arc -I libane -o my_test my_test.c libane/ane.m \
@@ -225,49 +292,73 @@ xcrun clang -O2 -fobjc-arc -I libane -o my_test my_test.c libane/ane.m \
 ./my_test
 ```
 
-Ausführliche API-Dokumentation: [libane/README.md](libane/README.md)
+</details>
+
+Ausführliche API-Dokumentation: **[libane/README.md](libane/README.md)**
 
 ---
 
 ## Benchmark-Ergebnisse (M3 Pro)
 
-| Metric | Wert | Erklärung |
-|--------|------|-----------|
-| Peak FP16 | 9.36 TFLOPS | Maximale Rechenleistung bei kleinen Tensoren |
-| Peak FP16 (large spatial) | 18.23 TOPS | Bei großen Tensor-Dimensionen (mehr parallele Ops) |
-| INT8 Speedup | 1.0-1.14x | Lohnt sich nicht auf M3 Pro (auf M4: 1.88x) |
-| Training Stories110M | 91-183 ms/step | Je nach Vocab-Größe |
-| Kernel-Compilation | 520ms | Einmalig beim Start (für 10 Kernel) |
-| QoS Background vs Default | 42% schneller | Weniger Scheduling-Overhead |
+| Metric | Wert | |
+|:---|---:|:---|
+| Peak FP16 | **9.36 TFLOPS** | Maximale Rechenleistung (kleine Tensoren) |
+| Peak FP16 (large spatial) | **18.23 TOPS** | Große Tensor-Dimensionen |
+| INT8 Speedup | **1.0–1.14x** | Lohnt nicht auf M3 Pro (M4: 1.88x) |
+| Training Stories110M | **91–183 ms/step** | Je nach Vocab-Größe |
+| Kernel-Compilation | **520 ms** | Einmalig beim Start (10 Kernel) |
+| QoS Background vs Default | **42% schneller** | Weniger Scheduling-Overhead |
 
-> **TFLOPS vs TOPS:** TFLOPS = Tera Floating-Point Operations Per Second (zählt multiply+add als 2 Ops). TOPS = Tera Operations Per Second (zählt jede Operation einzeln). Deswegen kann TOPS höher sein als TFLOPS bei gleicher Hardware.
+<details>
+<summary><i>TFLOPS vs TOPS — was ist der Unterschied?</i></summary>
 
-### Performance auf anderen Chips
+&nbsp;
 
-Dieses Projekt wurde auf einem M3 Pro entwickelt und getestet. Auf neueren Chips ist deutlich mehr drin:
+**TFLOPS** = Tera Floating-Point Operations Per Second — zählt multiply+add als 2 Ops.<br>
+**TOPS** = Tera Operations Per Second — zählt jede Operation einzeln.<br>
+Deswegen kann TOPS höher sein als TFLOPS bei gleicher Hardware.
 
-| Chip | ANE TOPS (Apple) | Mem Bandwidth | Geschätzte TFLOPS* | INT8 Speedup | Vorteil gegenüber M3 Pro |
-|------|-------------------|---------------|---------------------|--------------|--------------------------|
-| **M3 Pro** | 18 TOPS | 150 GB/s | **9.4 TFLOPS** (gemessen) | 1.0-1.14x | Baseline |
-| **M4** | 38 TOPS | 120 GB/s | ~11 TFLOPS | 1.88x | **2x ANE**, INT8 endlich nutzbar |
-| **M4 Pro** | 38 TOPS | 273 GB/s | ~11 TFLOPS | 1.88x | **2x ANE**, 1.8x Bandwidth |
-| **M4 Max** | 38 TOPS | 546 GB/s | ~11 TFLOPS | 1.88x | **2x ANE**, 3.6x Bandwidth |
-| **M5** | nicht veröffentlicht | 153 GB/s | ~12-14 TFLOPS† | TBD | ~2x+ ANE, GPU Neural Accelerators |
-| **M5 Pro** | nicht veröffentlicht | 307 GB/s | ~12-14 TFLOPS† | TBD | ~2x+ ANE, **2x Bandwidth**, 20 GPU NAs |
-| **M5 Max** | nicht veröffentlicht | 614 GB/s | ~12-14 TFLOPS† | TBD | ~2x+ ANE, **4x Bandwidth**, 40 GPU NAs |
+</details>
 
-\* TFLOPS-Schätzung für den Neural Engine allein (FP16, basierend auf unserem Benchmark-Verfahren). M4-Wert aus dem maderix/ANE Dashboard.
-† M5-ANE-Schätzung basiert auf dem Trend M3→M4 und Apples Angabe "faster Neural Engine with higher bandwidth".
+---
 
-**Was bedeutet das konkret?**
+## Chip-Vergleich — M3 Pro bis M5 Max
 
-- **M4 / M4 Pro**: Der Neural Engine hat doppelt so viele TOPS (38 vs 18). Training-Steps die auf M3 Pro 91ms dauern, sollten auf M4 bei **~45-55ms** landen. INT8-Quantisierung bringt nochmal 1.88x — damit wäre INT8-Training auf M4 realistisch (~25-30ms/step).
-- **M4 Max**: Gleicher ANE wie M4 Pro, aber 546 GB/s Memory-Bandwidth. Bei großen Modellen (>16MB Weights) wird der Durchsatz nicht mehr durch Memory-Transfers limitiert.
-- **M5 (Oktober 2025)**: Apple hat keine separaten ANE-TOPS veröffentlicht, aber der ANE ist laut Apple "schneller mit höherer Bandwidth". Die große Neuerung ist die **Fusion Architecture**: Jeder GPU-Core hat einen eigenen **Neural Accelerator**. Die Gesamt-AI-Leistung liegt laut Berichten bei ~133 TOPS (Neural Engine + alle GPU Neural Accelerators kombiniert).
-- **M5 Pro (März 2026)**: 18-Core CPU, 20-Core GPU (mit je einem Neural Accelerator), 307 GB/s — doppelte Memory-Bandwidth gegenüber M3 Pro. Apple spricht von **4x schnellerem LLM Prompt Processing** gegenüber M4 Pro.
-- **M5 Max (März 2026)**: 40-Core GPU (40 Neural Accelerators), 614 GB/s — **4x die Memory-Bandwidth** von M3 Pro. Für große Modelle ein Game-Changer.
+> Dieses Projekt wurde auf M3 Pro entwickelt. Auf neueren Chips ist **deutlich** mehr drin.
 
-> **Wichtiger Hinweis:** Die GPU Neural Accelerators im M5 sind über Metal/MLX erreichbar, **nicht** über die privaten ANE-APIs die `libane` nutzt. Für `libane`-User ist der M5-Vorteil primär der schnellere Neural Engine und die höhere Memory-Bandwidth. Um die vollen ~133 TOPS des M5 zu nutzen, müsste man auf Apples MLX-Framework umsteigen — das ist aber offiziell und stabil.
+| Chip | ANE TOPS | Mem BW | TFLOPS\* | INT8 | vs M3 Pro |
+|:---|---:|---:|---:|---:|:---|
+| **M3 Pro** | 18 | 150 GB/s | **9.4** | 1.0x | _Baseline_ |
+| **M4** | 38 | 120 GB/s | ~11 | 1.88x | **2x ANE** |
+| **M4 Pro** | 38 | 273 GB/s | ~11 | 1.88x | 2x ANE · 1.8x BW |
+| **M4 Max** | 38 | 546 GB/s | ~11 | 1.88x | 2x ANE · **3.6x BW** |
+| | | | | | |
+| **M5** | n/a | 153 GB/s | ~12–14† | TBD | GPU Neural Accelerators |
+| **M5 Pro** | n/a | 307 GB/s | ~12–14† | TBD | **2x BW** · 20 GPU NAs |
+| **M5 Max** | n/a | 614 GB/s | ~12–14† | TBD | **4x BW** · 40 GPU NAs |
+
+<sub>\* Neural Engine allein (FP16). M4-Wert aus maderix/ANE Dashboard.</sub><br>
+<sub>† Schätzung basierend auf M3→M4 Trend und Apples "faster Neural Engine" Angabe.</sub>
+
+<details>
+<summary><b>Was bedeutet das konkret?</b></summary>
+
+&nbsp;
+
+**M4 / M4 Pro** — Der Neural Engine hat doppelt so viele TOPS (38 vs 18). Training-Steps die auf M3 Pro 91ms dauern, landen auf M4 bei **~45–55ms**. INT8-Quantisierung bringt 1.88x — damit wird INT8-Training realistisch (~25–30ms/step).
+
+**M4 Max** — Gleicher ANE wie M4 Pro, aber 546 GB/s Memory-Bandwidth. Bei großen Modellen (>16MB Weights) kein Bottleneck mehr durch Memory-Transfers.
+
+**M5** _(Oktober 2025)_ — Apple hat keine separaten ANE-TOPS veröffentlicht. Die große Neuerung: **Fusion Architecture** — jeder GPU-Core hat einen eigenen **Neural Accelerator**. Gesamt-AI-Leistung laut Berichten: **~133 TOPS** (Neural Engine + GPU Neural Accelerators kombiniert).
+
+**M5 Pro** _(März 2026)_ — 18-Core CPU, 20-Core GPU mit je einem Neural Accelerator, 307 GB/s. Apple: **4x schnelleres LLM Prompt Processing** vs M4 Pro.
+
+**M5 Max** _(März 2026)_ — 40-Core GPU (40 Neural Accelerators), **614 GB/s** — 4x die Memory-Bandwidth von M3 Pro. Für große Modelle ein Game-Changer.
+
+</details>
+
+> [!IMPORTANT]
+> Die GPU Neural Accelerators im M5 sind über **Metal/MLX** erreichbar, **nicht** über die privaten ANE-APIs die `libane` nutzt. Für `libane`-User zählt primär der schnellere Neural Engine + höhere Memory-Bandwidth. Für die vollen ~133 TOPS braucht man Apples MLX-Framework — das ist offiziell und stabil.
 
 ---
 
@@ -275,116 +366,114 @@ Dieses Projekt wurde auf einem M3 Pro entwickelt und getestet. Auf neueren Chips
 
 ```
 ANE-Training/
-├── README.md                    ← Dieses Dokument
-├── ARCHITECTURE.md              ← 4-Schichten Platform-Architektur
-├── RESEARCH_ANE_COMPLETE.md     ← Vollständige Forschungsdoku
-├── SUMMARY_TECHNICAL.md         ← Technische Zusammenfassung
-├── SUMMARY_SIMPLE.md            ← Nicht-technische Zusammenfassung
-├── LICENSE                      ← MIT
-├── install.sh                   ← One-Liner Installer
 │
-├── examples/                    ← Lauffähige Demos
-│   ├── demo_train.c             ← ANE Training Demo (make demo)
-│   ├── bench.c                  ← Auto-Benchmark (make bench)
-│   ├── generate.c               ← Text Generation (make generate)
-│   ├── explore.m                ← ANE Explorer (make explore)
+├── README.md ·························· Dieses Dokument
+├── ARCHITECTURE.md ···················· 4-Schichten Platform-Architektur
+├── RESEARCH_ANE_COMPLETE.md ··········· Vollständige Forschungsdoku
+├── SUMMARY_TECHNICAL.md ·············· Technische Zusammenfassung
+├── SUMMARY_SIMPLE.md ················· Nicht-technische Zusammenfassung
+├── LICENSE ···························· MIT
+├── install.sh ························· One-Liner Installer
+│
+├── examples/ ·························· Lauffähige Demos
+│   ├── demo_train.c                     Training Demo
+│   ├── bench.c                          Auto-Benchmark
+│   ├── generate.c                       Text Generation
+│   ├── explore.m                        ANE Explorer
 │   └── Makefile
 │
-├── libane/                      ← Unsere C-API
-│   ├── ane.h                    ← Stabile API (ändert sich nie)
-│   ├── ane.m                    ← Implementierung mit Version-Detection
-│   ├── libane.dylib             ← Kompilierte Shared Library (73KB)
-│   ├── test_ane.c               ← Test-Suite
-│   ├── README.md                ← API-Dokumentation
-│   └── Makefile
-│
-├── repo/                        ← maderix/ANE (Referenz-Implementierung)
-│   ├── bridge/                  ← Original ANE-Bridge (4 Klassen)
-│   ├── training/                ← Training-Pipeline
-│   │   └── training_dynamic/    ← Dynamic Spatial Packing (was wir nutzen)
-│   ├── test_advanced.m          ← Unsere API-Probe-Tests
-│   └── *.m                      ← Diverse Benchmarks (SRAM, INT8, etc.)
-│
-└── personal-ai/                 ← Personal AI Assistent (auf libane aufgebaut)
-    ├── README.md                ← Lösungs-Dokumentation
-    └── ...                      ← Collect → Tokenize → Train → Query Pipeline
+└── libane/ ···························· Unsere C-API
+    ├── ane.h                            Stabile API (ändert sich nie)
+    ├── ane.m                            Implementierung + Version-Detection
+    ├── test_ane.c                       Test-Suite
+    ├── README.md                        API-Dokumentation
+    └── Makefile
 ```
 
 ---
 
-## Glossar
+<details>
+<summary><h2>Glossar</h2></summary>
+
+&nbsp;
 
 | Begriff | Erklärung |
-|---------|-----------|
-| **ANE** | Apple Neural Engine — der KI-Beschleuniger in Apple Silicon Chips |
-| **MIL** | Model Intermediate Language — Apples Textformat für Modell-Beschreibungen |
+|:---|:---|
+| **ANE** | Apple Neural Engine — KI-Beschleuniger in Apple Silicon |
+| **MIL** | Model Intermediate Language — Apples Textformat für Modelle |
 | **MLIR** | Multi-Level Intermediate Representation — Compiler-Zwischenformat |
-| **LLIR** | Low-Level IR — maschinennahe Darstellung vor der finalen Kompilierung |
-| **HWX** | Hardware Executable — das finale Binary das auf dem ANE läuft |
-| **IOSurface** | macOS-Mechanismus für geteilten Speicher zwischen CPU und ANE (Zero-Copy) |
+| **LLIR** | Low-Level IR — maschinennahe Darstellung vor Kompilierung |
+| **HWX** | Hardware Executable — finales Binary für den ANE |
+| **IOSurface** | macOS Zero-Copy Shared Memory zwischen CPU und ANE |
 | **QoS** | Quality of Service — Prioritätsstufe für ANE-Berechnungen |
-| **TFLOPS** | Tera Floating-Point Operations Per Second (1 TFLOP = 10¹² FP-Ops/Sek) |
-| **TOPS** | Tera Operations Per Second (zählt jede einzelne Operation) |
-| **FP16** | 16-bit Floating Point — das native Rechenformat des ANE |
-| **Conv 1x1** | 1x1 Convolution — wird auf ANE als schneller matmul-Ersatz genutzt |
-| **Dynamic Spatial Packing** | Trick: Weights neben Aktivierungen im Tensor packen, um Re-Compilation zu vermeiden |
+| **TFLOPS** | Tera Floating-Point Ops/Sek (10¹² FP-Ops) |
+| **TOPS** | Tera Operations/Sek (zählt jede einzelne Op) |
+| **FP16** | 16-bit Float — natives Rechenformat des ANE |
+| **Conv 1x1** | 1x1 Convolution — 3x schneller als matmul auf ANE |
+| **Dynamic Spatial Packing** | Weights neben Aktivierungen packen → kein Re-Compile |
 
----
+</details>
 
-## Troubleshooting
+<details>
+<summary><h2>Troubleshooting</h2></summary>
 
-### `ane_init()` gibt -1 zurück: Framework nicht gefunden
+&nbsp;
 
-Das AppleNeuralEngine-Framework liegt normalerweise unter:
-```
-/System/Library/PrivateFrameworks/AppleNeuralEngine.framework/AppleNeuralEngine
-```
-Wenn es fehlt, ist dein macOS zu alt oder Apple hat den Pfad geändert. Prüfe mit:
+### `ane_init()` gibt -1 zurück — Framework nicht gefunden
+
 ```bash
 ls /System/Library/PrivateFrameworks/AppleNeuralEngine.framework/
 ```
 
-### `ane_init()` gibt -2 zurück: Klassen nicht gefunden
+Wenn leer: macOS zu alt oder Apple hat den Pfad geändert.
 
-Apple hat möglicherweise die privaten Klassen umbenannt. `ane_init()` listet automatisch alle gefundenen ANE-Klassen auf stderr. Die neuen Namen in `libane/ane.m` eintragen und neu kompilieren.
+### `ane_init()` gibt -2 zurück — Klassen nicht gefunden
+
+Apple hat private Klassen umbenannt. `ane_init()` listet alle gefundenen ANE-Klassen auf stderr. Neue Namen in `libane/ane.m` eintragen, neu kompilieren.
 
 ### Compile-Fehler: `framework not found`
 
-Xcode Command Line Tools fehlen oder sind veraltet:
 ```bash
 xcode-select --install
-# oder bei Problemen:
+# oder:
 sudo xcode-select --reset
 ```
 
 ### `uname -m` zeigt `x86_64`
 
-Du bist auf einem Intel Mac oder läufst unter Rosetta. Der ANE existiert nur in Apple Silicon:
+Intel Mac oder Rosetta. ANE gibt es nur auf Apple Silicon:
+
 ```bash
-# Prüfe ob du unter Rosetta läufst:
 sysctl sysctl.proc_translated 2>/dev/null
 # 1 = Rosetta, 0 oder Fehler = nativ
 ```
 
-### Benchmark zeigt niedrigere TFLOPS als erwartet
+### Niedrigere TFLOPS als erwartet
 
-- Stelle sicher dass keine anderen rechenintensiven Prozesse laufen
-- Nutze QoS Background (9) — ist 42% schneller als Default
-- Erste Ausführung ist langsamer wegen Kernel-Compilation (520ms einmalig)
+- Keine anderen rechenintensiven Prozesse laufen lassen
+- QoS Background (9) nutzen — 42% schneller als Default
+- Erste Ausführung langsamer wegen Kernel-Compilation (520ms einmalig)
+
+</details>
 
 ---
 
 ## Verwandte Projekte
 
-- [maderix/ANE](https://github.com/maderix/ANE) — Erstes Training auf ANE (Inspiration für dieses Projekt)
-- [Orion Paper (arxiv:2603.06728)](https://arxiv.org/abs/2603.06728) — Akademisches Paper zu ANE-Programmierung
-- [hollance/neural-engine](https://github.com/hollance/neural-engine) — Community-Dokumentation
-- [eiln/ane](https://github.com/eiln/ane) — Linux-Kernel-Driver für ANE
+| Projekt | Beschreibung |
+|:---|:---|
+| [maderix/ANE](https://github.com/maderix/ANE) | Erstes Training auf ANE — Inspiration für dieses Projekt |
+| [Orion Paper](https://arxiv.org/abs/2603.06728) | Akademisches Paper zu ANE-Programmierung |
+| [hollance/neural-engine](https://github.com/hollance/neural-engine) | Community-Dokumentation |
+| [eiln/ane](https://github.com/eiln/ane) | Linux-Kernel-Driver für ANE |
 
-## Hinweis
+---
 
-Dieses Projekt nutzt Apples **private, undokumentierte APIs**. Diese können sich mit jedem macOS-Update ändern. `libane` hat Version-Detection als Schutz — wenn Apple Klassen umbenennt, muss nur `ane.m` aktualisiert werden. Dein Code gegen `ane.h` bleibt unverändert.
+> [!CAUTION]
+> Dieses Projekt nutzt Apples **private, undokumentierte APIs**. Diese können sich mit jedem macOS-Update ändern. `libane` hat Version-Detection als Schutz — wenn Apple Klassen umbenennt, muss nur `ane.m` aktualisiert werden. Dein Code gegen `ane.h` bleibt unverändert.
 
-## Lizenz
+<div align="center">
 
-MIT
+MIT License
+
+</div>
