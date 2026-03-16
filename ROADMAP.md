@@ -1,61 +1,61 @@
-# Roadmap — ANE-Training Optimierungen
+# Roadmap — ANE-Training Optimizations
 
-Stand: März 2026. Basierend auf Analyse des Orion Papers, NeuralForge, eiln/ane Linux-Driver, und eigener Codebase-Analyse.
+As of: March 2026. Based on analysis of the Orion Paper, NeuralForge, eiln/ane Linux driver, and our own codebase analysis.
 
 ---
 
-## P0 — Erledigt
+## P0 — Completed
 
 ### 1. Dynamic Spatial Packing (Zero Recompilation) — DONE
 
-**Problem:** ANE bakt Weights beim Compile ins HWX-Binary. Jeder Weight-Update erfordert Recompilation. Limit: ~119 Compilations pro Prozess.
+**Problem:** ANE bakes weights into the HWX binary at compile time. Every weight update requires recompilation. Limit: ~119 compilations per process.
 
-**Lösung:** Weights als Input-IOSurface-Channels statt BLOBFILE-Konstanten. Compile einmal, Weights per IOSurface-Write updaten.
+**Solution:** Weights as input IOSurface channels instead of BLOBFILE constants. Compile once, update weights via IOSurface write.
 
 ```
-Vorher:      compile(mil + weights) → 60 Compiles für 60 Steps
-Nachher:     compile(mil_dynamic) → 1 Compile für ∞ Steps
+Before:      compile(mil + weights) → 60 Compiles for 60 Steps
+After:       compile(mil_dynamic) → 1 Compile for ∞ Steps
 ```
 
-**Implementierung:**
-- `ane_mil_linear_dynamic()` — MIL mit Weights-als-Input (slice → reshape → matmul)
-- `ane_write_dynamic_weights()` — packt W[out][in] ins korrekte IOSurface-Layout
-- Input: `[1, in_ch + in_ch*out_ch, 1, seq]` — Aktivierungen + Weights zusammen
-- Beide Training-Demos (`demo_train.c`, `generate.c`) umgestellt
+**Implementation:**
+- `ane_mil_linear_dynamic()` — MIL with weights-as-input (slice → reshape → matmul)
+- `ane_write_dynamic_weights()` — packs W[out][in] into the correct IOSurface layout
+- Input: `[1, in_ch + in_ch*out_ch, 1, seq]` — activations + weights together
+- Both training demos (`demo_train.c`, `generate.c`) converted
 
-**Ergebnis:** Compile count 1 statt 60. ~119 Limit komplett umgangen. 0.1ms/step.
+**Result:** Compile count 1 instead of 60. ~119 limit completely bypassed. 0.1ms/step.
 
-**RE-Erkenntnis:** Delta Compilation (Disk-Patching nach Unload/Reload) funktioniert NICHT — ANE bakt Weights ins HWX und liest sie nicht erneut von Disk. `ane_reload_weights()` bleibt als EXPERIMENTAL API erhalten.
+**RE insight:** Delta Compilation (disk patching after unload/reload) does NOT work — ANE bakes weights into HWX and does not re-read them from disk. `ane_reload_weights()` remains as EXPERIMENTAL API.
 
 ---
 
 ### 2. FP16 Overflow Protection — DONE
 
-**Problem:** FP16 max = 65504. Softmax/RMSNorm können Overflow verursachen → NaN → Training divergiert.
+**Problem:** FP16 max = 65504. Softmax/RMSNorm can cause overflow → NaN → training diverges.
 
-**Lösung:** Aktivierungen clampen, Gradienten sanitizen. Implementiert in `demo_train.c` und `generate.c`.
+**Solution:** Clamp activations, sanitize gradients. Implemented in `demo_train.c` and `generate.c`.
 
 ```c
-// Vor Softmax/RMSNorm:
+// Before Softmax/RMSNorm:
 for (int i = 0; i < n; i++)
     x[i] = fminf(fmaxf(x[i], -65504.0f), 65504.0f);
 
-// Nach Gradient-Berechnung:
+// After gradient computation:
 for (int i = 0; i < n; i++) {
     if (isnan(grad[i])) grad[i] = 0.0f;
     if (isinf(grad[i])) grad[i] = copysignf(65504.0f, grad[i]);
 }
 ```
 
-**Dateien:** `examples/demo_train.c`, `examples/generate.c`
+**Files:** `examples/demo_train.c`, `examples/generate.c`
 
 ---
 
-### 3. Process-Restart bei ~119 Compilations — OBSOLET (durch DSP gelöst)
+### 3. Process Restart at ~119 Compilations — OBSOLETE (solved by DSP)
 
-**Problem:** ANE erlaubt ~119 Compilations pro Prozess, dann stille Fehler.
+**Problem:** ANE allows ~119 compilations per process, then silent failures.
 
-**Lösung:** Compilation-Counter + `execl()` mit Resume-Flag.
+**Solution:** Compilation counter + `execl()` with resume flag.
 
 ```c
 static int g_compile_count = 0;
@@ -69,40 +69,40 @@ ANEKernel *ane_compile(...) {
 }
 ```
 
-**Hinweis:** Dynamic Spatial Packing umgeht das Problem bereits (1x compile, ∞ weight-updates). Trotzdem als Safety-Net implementieren.
+**Note:** Dynamic Spatial Packing already bypasses this problem (1x compile, ∞ weight updates). Still worth implementing as a safety net.
 
-**Dateien:** `libane/ane.m` (Counter), `examples/demo_train.c` (Checkpoint/Resume)
+**Files:** `libane/ane.m` (counter), `examples/demo_train.c` (checkpoint/resume)
 
 ---
 
-### 4. Zero-Copy für Weight-Updates — DONE (Teil von DSP)
+### 4. Zero-Copy for Weight Updates — DONE (part of DSP)
 
-**Problem:** `ane_write()` macht Lock → memcpy → Unlock (55-65µs pro Call).
+**Problem:** `ane_write()` does lock → memcpy → unlock (55-65µs per call).
 
-**Lösung:** Direkt in IOSurface schreiben via `ane_input_ptr()`.
+**Solution:** Write directly into IOSurface via `ane_input_ptr()`.
 
 ```c
-// Statt:
+// Instead of:
 ane_write(k, 0, updated_weights, bytes);
 
-// Besser:
+// Better:
 ane_lock_input(k, 0);
 float *ptr = (float *)ane_input_ptr(k, 0);
-// Nur geänderte Weights updaten (delta):
+// Only update changed weights (delta):
 for (int i = 0; i < n_changed; i++)
     ptr[changed_idx[i]] = new_val[i];
 ane_unlock_input(k, 0);
 ```
 
-**Dateien:** `examples/demo_train.c`, `examples/generate.c`
+**Files:** `examples/demo_train.c`, `examples/generate.c`
 
 ---
 
 ### 5. SRAM Budget Tracking — DONE
 
-**Problem:** M3 Pro SRAM ~16MB, Throughput-Drop ab 73.5MB, Cliff bei 129MB.
+**Problem:** M3 Pro SRAM ~16MB, throughput drop above 73.5MB, cliff at 129MB.
 
-**Lösung:** Tensor-Größen tracken, warnen wenn Budget überschritten.
+**Solution:** Track tensor sizes, warn when budget is exceeded.
 
 ```c
 // In ane_compile():
@@ -113,48 +113,48 @@ if (total_io > 16 * 1024 * 1024)
     fprintf(stderr, "libane: warning: total I/O %zuMB exceeds SRAM (~16MB)\n", total_io >> 20);
 ```
 
-**Dateien:** `libane/ane.m`
+**Files:** `libane/ane.m`
 
 ---
 
-### 6. Alphabetische IOSurface-Sortierung
+### 6. Alphabetical IOSurface Sorting
 
-**Problem:** Multi-Input/Output Surfaces müssen alphabetisch nach MIL-Variablenname sortiert sein. Falsche Reihenfolge = stille Fehler.
+**Problem:** Multi-input/output surfaces must be sorted alphabetically by MIL variable name. Wrong order = silent failures.
 
-**Quelle:** Orion Constraint #3, #19
+**Source:** Orion Constraint #3, #19
 
-**Dateien:** `libane/ane.m` (Sortierung in `ane_compile()`)
+**Files:** `libane/ane.m` (sorting in `ane_compile()`)
 
 ---
 
-## P1 — Mittelfristig (architektonische Änderungen)
+## P1 — Medium-term (architectural changes)
 
-### 7. Pipeline-Parallelismus (30-40% Latenz)
+### 7. Pipeline Parallelism (30-40% Latency)
 
-**Problem:** CPU Backward (30ms) blockiert während ANE idle ist.
+**Problem:** CPU backward pass (30ms) blocks while ANE is idle.
 
-**Lösung:** Backward Step N parallel zum Forward Step N+1.
+**Solution:** Backward step N in parallel with forward step N+1.
 
 ```
-Aktuell (sequentiell):
+Current (sequential):
   ANE forward [22ms] → CPU backward [30ms] → ANE forward [22ms] → ...
   Total: 52ms/step
 
 Pipeline:
   ANE forward N [22ms] → ANE forward N+1 [22ms]
   CPU backward N [30ms]  ← parallel!
-  Total: ~30ms/step (ANE ist Bottleneck statt CPU)
+  Total: ~30ms/step (ANE is bottleneck instead of CPU)
 ```
 
-**Implementierung:** Async ANE eval via `_ANEClient::enqueueSetsWithModel:` + Completion-Handler.
+**Implementation:** Async ANE eval via `_ANEClient::enqueueSetsWithModel:` + completion handler.
 
 ---
 
 ### 8. LoRA Adapter-as-Input
 
-**Problem:** Weight-Updates erfordern Recompilation oder Delta-Compilation.
+**Problem:** Weight updates require recompilation or delta compilation.
 
-**Lösung:** Base-Weights in BLOBFILE (compile once), LoRA-Adapter (A, B Matrizen) als IOSurface-Input.
+**Solution:** Base weights in BLOBFILE (compile once), LoRA adapters (A, B matrices) as IOSurface input.
 
 ```
 MIL:
@@ -165,46 +165,46 @@ MIL:
   output = conv(input, W_eff)
 ```
 
-**Vorteil:** Zero Recompilation für Fine-Tuning. Hot-Swap von Adaptern.
+**Advantage:** Zero recompilation for fine-tuning. Hot-swap of adapters.
 
-**Quelle:** Orion Section 4.3
+**Source:** Orion Section 4.3
 
 ---
 
 ### 9. Kernel Chaining (`_ANEChainingRequest`)
 
-**Problem:** Jede Kernel-Eval hat CPU-Roundtrip (~0.2ms). Bei 12-Layer Transformer: 22 Roundtrips = 4.4ms Overhead.
+**Problem:** Each kernel eval has a CPU roundtrip (~0.2ms). For a 12-layer transformer: 22 roundtrips = 4.4ms overhead.
 
-**Status:** Objekt-Erstellung funktioniert, `validate()` schlägt fehl (Parameter-Typ-Mismatch).
+**Status:** Object creation works, `validate()` fails (parameter type mismatch).
 
-**Nächste Schritte:**
-1. NSNumber-Parameter die eigentlich Arrays sein sollten identifizieren
-2. `_ANEBuffer` Objekte für Zwischen-Tensoren korrekt aufbauen
-3. `_ANEClient::prepareChainingWithModel:chainingReq:qos:error:` testen
+**Next steps:**
+1. Identify NSNumber parameters that should actually be arrays
+2. Correctly build `_ANEBuffer` objects for intermediate tensors
+3. Test `_ANEClient::prepareChainingWithModel:chainingReq:qos:error:`
 
-**Geschätzter Gain:** 3-5x Forward-Pass Speedup (bei tiefem Netzwerk).
+**Estimated gain:** 3-5x forward pass speedup (for deep networks).
 
 ---
 
-### 10. RMSNorm auf ANE
+### 10. RMSNorm on ANE
 
-**Problem:** 24 RMSNorm-Operationen pro Step (2 pro Layer × 12 Layer) laufen auf CPU (~4-6ms).
+**Problem:** 24 RMSNorm operations per step (2 per layer x 12 layers) run on CPU (~4-6ms).
 
-**Lösung:** MIL-Programm für RMSNorm:
+**Solution:** MIL program for RMSNorm:
 
 ```
 reduce_mean(square(x)) → add(eps) → rsqrt → mul(x) → mul(gamma)
 ```
 
-Alle Ops sind ANE-kompatibel. Als separater Kernel kompilieren oder in bestehende Kernel fusionieren.
+All ops are ANE-compatible. Compile as separate kernel or fuse into existing kernels.
 
 ---
 
-### 11. Causal Masking via `where()` auf ANE
+### 11. Causal Masking via `where()` on ANE
 
-**Problem:** Attention läuft auf CPU weil ANE kein Causal Masking kann.
+**Problem:** Attention runs on CPU because ANE cannot do causal masking.
 
-**Lösung:** MIL `where()` Operator:
+**Solution:** MIL `where()` operator:
 
 ```
 causal_mask = constant([1, heads, seq, seq])  // Lower-triangular, baked
@@ -214,11 +214,11 @@ attn = softmax(masked, axis=-1)
 output = matmul(attn, V)
 ```
 
-**Einschränkung:** Causal Mask ist fix pro Sequenzlänge. Bei variabler Länge: mehrere Kernel vorcompilieren.
+**Limitation:** Causal mask is fixed per sequence length. For variable length: pre-compile multiple kernels.
 
 ---
 
-## P2 — Langfristig (Hybrid ANE + GPU)
+## P2 — Long-term (Hybrid ANE + GPU)
 
 ### 12. ANE Forward + GPU Backward
 
@@ -244,36 +244,36 @@ output = matmul(attn, V)
 └─────────────────────────────┘
 ```
 
-**Voraussetzung:** IOSurface-zu-Metal-Buffer Zero-Copy Mapping.
+**Prerequisite:** IOSurface-to-Metal-buffer zero-copy mapping.
 
-**Geschätzter Gain:** 2-3x Gesamt-Speedup.
+**Estimated gain:** 2-3x overall speedup.
 
 ---
 
 ### 13. GPU FlashAttention
 
-Metal FlashAttention 2.0 existiert (Draw Things Engineering). Für lange Sequenzen (>512 Tokens) signifikant schneller als CPU-Attention.
+Metal FlashAttention 2.0 exists (Draw Things Engineering). For long sequences (>512 tokens) significantly faster than CPU attention.
 
-**Gain:** 3-5x für Attention-Berechnung.
+**Gain:** 3-5x for attention computation.
 
 ---
 
-### 14. M5 GPU Neural Accelerators nutzen
+### 14. Leverage M5 GPU Neural Accelerators
 
-M5 hat drei ML-Beschleuniger:
+M5 has three ML accelerators:
 - **ANE** (16-core, ~38+ TOPS) — via libane
-- **GPU Neural Accelerators** (10-40 pro Chip, ~95 TOPS auf M5 Pro) — via Metal 4 TensorOps
+- **GPU Neural Accelerators** (10-40 per chip, ~95 TOPS on M5 Pro) — via Metal 4 TensorOps
 - **CPU** (NEON/AMX)
 
-Für maximale Performance: ANE für Forward, GPU-NAs für Backward.
+For maximum performance: ANE for forward, GPU-NAs for backward.
 
-**Voraussetzung:** M5 Hardware + Metal 4 SDK.
+**Prerequisite:** M5 hardware + Metal 4 SDK.
 
 ---
 
-## Neue Projekte & Quellen
+## New Projects & Sources
 
-| Projekt | Relevanz |
+| Project | Relevance |
 |:---|:---|
 | [Orion Paper](https://arxiv.org/abs/2603.06728) | Delta Compilation, LoRA-as-Input, 20 Constraints |
 | [NeuralForge](https://github.com/Khaeldur/NeuralForge) | Process-Restart, GGUF-Export, Gradient Accumulation |
@@ -281,35 +281,35 @@ Für maximale Performance: ANE für Forward, GPU-NAs für Backward.
 | [SqueezeBits Yetter](https://blog.squeezebits.com/disaggregated-inference-on-apple-silicon-npu-prefill-and-gpu-decode-67176) | Disaggregated Inference (ANE Prefill + GPU Decode) |
 | [Metal FlashAttention 2.0](https://engineering.drawthings.ai/) | GPU Attention |
 | [Apple MLX M5 Research](https://machinelearning.apple.com/research/exploring-llms-mlx-m5) | GPU Neural Accelerator Benchmarks |
-| [eiln/ane](https://github.com/eiln/ane) | E5 Binary Format Analyse |
+| [eiln/ane](https://github.com/eiln/ane) | E5 Binary Format Analysis |
 | [tzakharko M5 Microbenchmarks](https://tzakharko.github.io/apple-neural-accelerators-benchmark/) | GPU-NA Tile-Size, FLOPS/Core |
 
 ---
 
-## Aktuelle Bottleneck-Analyse
+## Current Bottleneck Analysis
 
 ```
 Training Step (91ms, M3 Pro, Stories110M):
 
   ANE Forward      ████████████░░░░░░░░░░░░  22ms (24%)
   CPU Attention     ███░░░░░░░░░░░░░░░░░░░░░   5ms  (5%)
-  ANE Backward     ██████████████░░░░░░░░░░  30ms (33%)  ← teilweise CPU (dW)
+  ANE Backward     ██████████████░░░░░░░░░░  30ms (33%)  ← partially CPU (dW)
   CPU RMSNorm      ███░░░░░░░░░░░░░░░░░░░░░   5ms  (5%)
   CPU dW Gradients ████████████████████░░░░  20ms (22%)  ← CBLAS matmul
   CPU Adam Update  ██░░░░░░░░░░░░░░░░░░░░░░   3ms  (3%)
   Overhead         ██████░░░░░░░░░░░░░░░░░░   6ms  (7%)
 
-  ANE: 41% | CPU: 59% ← CPU ist Bottleneck
+  ANE: 41% | CPU: 59% ← CPU is bottleneck
 ```
 
-**Nach P0+P1 Optimierungen (geschätzt):**
+**After P0+P1 optimizations (estimated):**
 
 ```
   ANE Forward      ████████████░░░░░░░░░░░░  22ms
-  ANE Attention    ███░░░░░░░░░░░░░░░░░░░░░   3ms  ← war CPU
+  ANE Attention    ███░░░░░░░░░░░░░░░░░░░░░   3ms  ← was CPU
   ANE Backward     ██████████████░░░░░░░░░░  15ms  ← parallel
   CPU dW (parallel)████████████░░░░░░░░░░░░   0ms  ← hidden behind ANE
-  Delta Reload     ████░░░░░░░░░░░░░░░░░░░░   5ms  ← war 4200ms
+  Delta Reload     ████░░░░░░░░░░░░░░░░░░░░   5ms  ← was 4200ms
 
-  Geschätzter Step: ~30ms (3x schneller)
+  Estimated step: ~30ms (3x faster)
 ```

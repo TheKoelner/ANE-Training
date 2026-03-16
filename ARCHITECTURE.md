@@ -1,284 +1,284 @@
-# Architektur — ANE Training Platform
+# Architecture — ANE Training Platform
 
-## Was ist das hier?
+## What is this?
 
-Dieses Dokument beschreibt die 4-Schichten-Architektur hinter dem Projekt — von der Forschung bis zur fertigen Anwendung. Es zeigt, wie alles zusammenhängt und warum bestimmte Entscheidungen getroffen wurden.
+This document describes the 4-layer architecture behind the project — from research to the finished application. It shows how everything fits together and why certain decisions were made.
 
-Das öffentliche Repository enthält **Schicht 1 (Forschung) und Schicht 2 (libane)** mit lauffähigen Demos. Schicht 3 (Training-Pipeline) basiert auf [maderix/ANE](https://github.com/maderix/ANE) und wird hier referenziert. Schicht 4 (Personal AI) ist ein separates Projekt das auf der Platform aufbaut.
+The public repository contains **Layer 1 (Research) and Layer 2 (libane)** with runnable demos. Layer 3 (Training Pipeline) is based on [maderix/ANE](https://github.com/maderix/ANE) and is referenced here. Layer 4 (Personal AI) is a separate project that builds on top of the platform.
 
-Die Platform ist wiederverwendbar. Man könnte darauf einen Code-Assistenten, einen Log-Analyzer, einen lokalen Chatbot oder einen Bild-Classifier bauen.
+The platform is reusable. You could build a code assistant, a log analyzer, a local chatbot, or an image classifier on top of it.
 
 ---
 
-## Schicht 1: Forschung & Erkenntnis
+## Layer 1: Research & Discovery
 
-### Was wir gemacht haben
-Reverse-Engineering von Apples privatem Neural Engine Framework durch:
-- Runtime-Introspection aller ObjC-Klassen via `objc_copyClassList`
-- Systematisches Proben von Methoden via `objc_msgSend` mit Crash-Recovery
-- Benchmark-Suite auf eigenem M3 Pro Hardware ausgeführt
-- Web-Research zu allen bekannten RE-Projekten und dem Orion-Paper
+### What we did
+Reverse engineering of Apple's private Neural Engine framework through:
+- Runtime introspection of all ObjC classes via `objc_copyClassList`
+- Systematic probing of methods via `objc_msgSend` with crash recovery
+- Benchmark suite executed on our own M3 Pro hardware
+- Web research on all known RE projects and the Orion paper
 
-### Was wir herausgefunden haben
+### What we discovered
 
-**35 private Klassen** entdeckt (das Original-Repo nutzt nur 4):
+**35 private classes** discovered (the original repo uses only 4):
 
-| Klasse | Was sie tut | Genutzt? |
-|--------|------------|----------|
-| `_ANEInMemoryModelDescriptor` | MIL-Text + Weights → Modell-Descriptor | Ja (libane) |
-| `_ANEInMemoryModel` | Compile → Load → Evaluate → Unload | Ja (libane) |
-| `_ANERequest` | Bindet IOSurface I/O an Evaluation | Ja (libane) |
-| `_ANEIOSurfaceObject` | Wrapper für IOSurface (Zero-Copy) | Ja (libane) |
-| `_ANEClient` | Direkte Hardware-Verbindung zum ANE-Daemon | Ja (Probing) |
-| `_ANEDeviceInfo` | Hardware-Erkennung (Architektur, Cores, Board) | Ja (libane) |
-| `_ANEQoSMapper` | 6 QoS-Level für Prioritätssteuerung | Ja (Probing) |
-| `_ANEChainingRequest` | Kernel-Pipeline ohne CPU-Roundtrip | Teilweise (Objekte erstellt, validate noch nicht) |
-| `_ANEBuffer` | IOSurface + Symbol-Index Bindung | Ja (Probing) |
-| `_ANEPerformanceStats` | Hardware-Performance-Counter | Nein (braucht Entitlements?) |
-| 25 weitere | Daemon-Connection, Virtualization, Weight-Management, etc. | Katalogisiert |
+| Class | What it does | Used? |
+|-------|-------------|-------|
+| `_ANEInMemoryModelDescriptor` | MIL text + Weights → Model descriptor | Yes (libane) |
+| `_ANEInMemoryModel` | Compile → Load → Evaluate → Unload | Yes (libane) |
+| `_ANERequest` | Binds IOSurface I/O to evaluation | Yes (libane) |
+| `_ANEIOSurfaceObject` | Wrapper for IOSurface (zero-copy) | Yes (libane) |
+| `_ANEClient` | Direct hardware connection to the ANE daemon | Yes (probing) |
+| `_ANEDeviceInfo` | Hardware detection (architecture, cores, board) | Yes (libane) |
+| `_ANEQoSMapper` | 6 QoS levels for priority control | Yes (probing) |
+| `_ANEChainingRequest` | Kernel pipeline without CPU roundtrip | Partial (objects created, validate not yet) |
+| `_ANEBuffer` | IOSurface + symbol index binding | Yes (probing) |
+| `_ANEPerformanceStats` | Hardware performance counters | No (requires entitlements?) |
+| 25 more | Daemon connection, virtualization, weight management, etc. | Cataloged |
 
-**Hardware-Identität des M3 Pro** (via `_ANEDeviceInfo`):
+**Hardware identity of the M3 Pro** (via `_ANEDeviceInfo`):
 ```
-Architektur:  h15g (M4 = h16g)
+Architecture: h15g (M4 = h16g)
 Cores:        16
-Einheiten:    1
-Board-Typ:    192
-Power-Gating: 0mW wenn idle
+Units:        1
+Board type:   192
+Power gating: 0mW when idle
 ```
 
-**6 QoS-Level** entdeckt und benchmarked:
+**6 QoS levels** discovered and benchmarked:
 ```
-Background(9):      0.143 ms  ← SCHNELLSTER! Für Training nutzen.
+Background(9):      0.143 ms  ← FASTEST! Use for training.
 Utility(17):        0.227 ms
-Default(21):        0.248 ms  ← Was das Original-Repo nutzt.
+Default(21):        0.248 ms  ← What the original repo uses.
 UserInitiated(25):  0.249 ms
 UserInteractive(33):0.247 ms
 ```
-**Erkenntnis:** Background-QoS ist 42% schneller als Default weil weniger Scheduling-Overhead.
+**Finding:** Background QoS is 42% faster than Default because of less scheduling overhead.
 
-**Compilation-Pipeline** (vorher unbekannt):
+**Compilation pipeline** (previously unknown):
 ```
 model.mil → model.bc.mlir → model.llir.bundle → model.hwx
 (MIL Text)   (MLIR Bitcode)  (Low-Level IR)     (HW Binary)
 ```
 
-**Performance-Benchmarks** (M3 Pro):
-- Peak FP16 (kleine Spatial): 9.36 TFLOPS
-- Peak FP16 (große Spatial): 18.23 TOPS
-- INT8 bringt nur 1.0-1.14x (auf M4: 1.88x) → lohnt sich nicht auf M3
-- Training: 183ms/step (32K Vocab), 91ms/step (nach Vocab-Compaction)
+**Performance benchmarks** (M3 Pro):
+- Peak FP16 (small spatial): 9.36 TFLOPS
+- Peak FP16 (large spatial): 18.23 TOPS
+- INT8 yields only 1.0-1.14x (on M4: 1.88x) → not worth it on M3
+- Training: 183ms/step (32K vocab), 91ms/step (after vocab compaction)
 
-**20 ANE-Constraints** (aus dem Orion-Paper):
-- `concat` wird vom ANE-Compiler abgelehnt
-- `gelu` nicht unterstützt (tanh-Approximation nutzen)
-- Conv 1x1 ist 3x schneller als matmul
-- ~119 Compilations pro Prozess, dann exec()-Restart nötig
-- Letzter Tensor-Axis muss 64-Byte-aligned sein
+**20 ANE constraints** (from the Orion paper):
+- `concat` is rejected by the ANE compiler
+- `gelu` not supported (use tanh approximation)
+- Conv 1x1 is 3x faster than matmul
+- ~119 compilations per process, then exec() restart required
+- Last tensor axis must be 64-byte aligned
 
-### Wo ist das dokumentiert?
-- `RESEARCH_ANE_COMPLETE.md` — Vollständige Forschungsdoku (Benchmarks, API-Surface, Constraints, Quellen)
-- `SUMMARY_TECHNICAL.md` — Technische Zusammenfassung des maderix/ANE Repos
-- `SUMMARY_SIMPLE.md` — Nicht-technische Zusammenfassung mit Use-Cases
+### Where is this documented?
+- `RESEARCH_ANE_COMPLETE.md` — Complete research documentation (benchmarks, API surface, constraints, sources)
+- `SUMMARY_TECHNICAL.md` — Technical summary of the maderix/ANE repo
+- `SUMMARY_SIMPLE.md` — Non-technical summary with use cases
 
 ---
 
-## Schicht 2: libane — Unsere eigene C-API
+## Layer 2: libane — Our Own C API
 
-### Warum?
-Das maderix/ANE Repo hat seinen eigenen Bridge-Code (`bridge/ane_bridge.m`), aber:
-- Keine Version-Detection (bricht wenn Apple Klassen umbenennt)
-- Keine Device-Erkennung
-- Kein QoS-Support (alles auf Default=21)
-- Keine saubere API-Trennung
+### Why?
+The maderix/ANE repo has its own bridge code (`bridge/ane_bridge.m`), but:
+- No version detection (breaks if Apple renames classes)
+- No device detection
+- No QoS support (everything on Default=21)
+- No clean API separation
 
-### Was wir gebaut haben
+### What we built
 
 ```
 libane/
-├── ane.h          ← Stabile C-API (ändert sich NIE)
-├── ane.m          ← Implementierung (ändert sich wenn Apple API ändert)
-├── libane.dylib   ← Shared Library (73KB, arm64)
-├── test_ane.c     ← Test-Suite (3/3 bestanden)
+├── ane.h          ← Stable C API (NEVER changes)
+├── ane.m          ← Implementation (changes when Apple API changes)
+├── libane.dylib   ← Shared library (73KB, arm64)
+├── test_ane.c     ← Test suite (3/3 passed)
 └── Makefile
 ```
 
-### Wie die Version-Detection funktioniert
+### How version detection works
 
 ```c
-// ane.m versucht bekannte Klassen-Namen in Reihenfolge:
+// ane.m tries known class names in order:
 static const char *MODEL_CLASS_NAMES[] = {
-    "_ANEInMemoryModel",    // aktuell (macOS 15-26)
-    "_ANEModel",            // falls Apple umbenennt
-    "ANEInMemoryModel",     // ohne Unterstrich
-    "ANEModel",             // komplett neu
+    "_ANEInMemoryModel",    // current (macOS 15-26)
+    "_ANEModel",            // in case Apple renames
+    "ANEInMemoryModel",     // without underscore
+    "ANEModel",             // completely new
     NULL
 };
 ```
 
-Bei jedem `ane_init()`:
-1. Framework laden (3 bekannte Pfade werden probiert)
-2. Klassen auflösen (Alternativen durchprobieren)
-3. Selektoren auflösen (Methoden-Namen durchprobieren)
-4. API-Version bestimmen (1 = bekannt, 0 = unbekannt)
-5. Wenn unbekannt: alle ANE-Klassen auflisten für Debugging
+On each `ane_init()`:
+1. Load framework (3 known paths are tried)
+2. Resolve classes (try alternatives)
+3. Resolve selectors (try method names)
+4. Determine API version (1 = known, 0 = unknown)
+5. If unknown: list all ANE classes for debugging
 
-**Wenn Apple die API ändert:**
-- `ane.h` bleibt gleich (dein Code ändert sich nicht)
-- Neue Klassen-/Methoden-Namen in `ane.m` eintragen
-- Neu kompilieren, fertig
+**If Apple changes the API:**
+- `ane.h` stays the same (your code doesn't change)
+- Add new class/method names in `ane.m`
+- Recompile, done
 
-### API-Übersicht
+### API Overview
 
 ```c
-// Initialisierung + Hardware-Erkennung
+// Initialization + hardware detection
 ane_init();
 ANEDeviceInfo info = ane_device_info();   // h15g, 16 cores, etc.
 ANEAPIInfo api = ane_api_info();          // version, classes found, selectors resolved
-ane_print_diagnostics();                  // Druckt alles auf stderr
+ane_print_diagnostics();                  // Prints everything to stderr
 
-// Kompilierung
+// Compilation
 ANEWeight w = ane_weight_fp16("@model_path/weights/w.bin", data, rows, cols);
 char *mil = ane_mil_linear(in_ch, out_ch, seq, weight_name);
 ANEKernel *k = ane_compile(mil, len, &w, 1, 1, &in_sz, 1, &out_sz, ANE_QOS_BACKGROUND);
 
 // Evaluation
-ane_write(k, 0, input_data, bytes);       // Daten → IOSurface
-ane_eval(k, ANE_QOS_BACKGROUND);          // ANE ausführen
-ane_read(k, 0, output_data, bytes);       // IOSurface → Daten
+ane_write(k, 0, input_data, bytes);       // Data → IOSurface
+ane_eval(k, ANE_QOS_BACKGROUND);          // Execute ANE
+ane_read(k, 0, output_data, bytes);       // IOSurface → Data
 
-// Zero-Copy (schneller, kein memcpy)
+// Zero-copy (faster, no memcpy)
 ane_lock_input(k, 0);
 float *ptr = (float *)ane_input_ptr(k, 0);
-ptr[0] = 42.0f;                           // Direkt in IOSurface schreiben
+ptr[0] = 42.0f;                           // Write directly to IOSurface
 ane_unlock_input(k, 0);
 
-// Aufräumen
+// Cleanup
 ane_free(k);
 ane_weight_free(&w);
 ```
 
-### Architektur-Entscheidungen
+### Architecture Decisions
 
-| Entscheidung | Grund |
-|-------------|-------|
-| C-API (nicht ObjC/Swift) | Maximale Portabilität, von jedem Sprache nutzbar |
-| Cached Selectors | Null Overhead zur Laufzeit bei Methoden-Aufrufen |
-| IOSurface für I/O | Zero-Copy zwischen CPU und ANE (kein Staging-Buffer) |
-| Conv 1x1 statt matmul | 3x schneller auf ANE (Orion-Paper bestätigt) |
-| QoS=9 (Background) | 42% schneller als Default, niedrigste Systembelastung |
-| FP32 Ein/Ausgang, FP16 intern | ANE rechnet in FP16, aber CPU braucht FP32 für Gradienten |
+| Decision | Reason |
+|----------|--------|
+| C API (not ObjC/Swift) | Maximum portability, usable from any language |
+| Cached selectors | Zero overhead at runtime for method calls |
+| IOSurface for I/O | Zero-copy between CPU and ANE (no staging buffer) |
+| Conv 1x1 instead of matmul | 3x faster on ANE (Orion paper confirms) |
+| QoS=9 (Background) | 42% faster than Default, lowest system load |
+| FP32 input/output, FP16 internal | ANE computes in FP16, but CPU needs FP32 for gradients |
 
 ---
 
-## Schicht 3: Training Pipeline
+## Layer 3: Training Pipeline
 
-> **Hinweis:** Schicht 3 basiert auf dem [maderix/ANE](https://github.com/maderix/ANE) Repo und ist nicht in diesem Repository enthalten. Dieses Kapitel dokumentiert unsere Erkenntnisse und Anpassungen.
+> **Note:** Layer 3 is based on the [maderix/ANE](https://github.com/maderix/ANE) repo and is not included in this repository. This chapter documents our findings and adaptations.
 
-### Was wir nutzen
-Das maderix/ANE Repo (`training/training_dynamic/`) — ein funktionierender Transformer-Trainer der direkt auf dem ANE läuft.
+### What we use
+The maderix/ANE repo (`training/training_dynamic/`) — a working Transformer trainer that runs directly on the ANE.
 
-### Was wir angepasst haben
-- Dashboard-TFLOPS: 15.8 (M4) → 9.36 (M3 Pro)
-- Synthetische Testdaten erstellt (500K Tokens)
-- Tokenizer via git-lfs gepullt
-- Verifiziert: 50 Steps stabil, kein NaN, keine Crashes
+### What we adapted
+- Dashboard TFLOPS: 15.8 (M4) → 9.36 (M3 Pro)
+- Created synthetic test data (500K tokens)
+- Pulled tokenizer via git-lfs
+- Verified: 50 steps stable, no NaN, no crashes
 
-### Wie Training funktioniert (vereinfacht)
+### How training works (simplified)
 ```
-1. MIL-Programme generieren (10 Kernel-Typen pro Layer)
-2. Einmal auf ANE kompilieren (520ms für alle 10)
-3. Pro Training-Step:
-   a. Weights in IOSurface-Spatial-Dimension packen (CPU)
-   b. Forward-Pass: ANE evaluiert Kernel (22ms)
-   c. Attention + Softmax + RoPE auf CPU (weil ANE kein Causal-Masking kann)
-   d. Backward-Pass: ANE für dx-Gradienten (30ms), CPU für dW via CBLAS
-   e. Adam-Optimizer-Update auf CPU
-   f. Weights werden direkt im IOSurface aktualisiert (kein Recompile!)
+1. Generate MIL programs (10 kernel types per layer)
+2. Compile once on ANE (520ms for all 10)
+3. Per training step:
+   a. Pack weights into IOSurface spatial dimension (CPU)
+   b. Forward pass: ANE evaluates kernel (22ms)
+   c. Attention + Softmax + RoPE on CPU (because ANE can't do causal masking)
+   d. Backward pass: ANE for dx gradients (30ms), CPU for dW via CBLAS
+   e. Adam optimizer update on CPU
+   f. Weights are updated directly in IOSurface (no recompile!)
 ```
 
-### Schlüssel-Innovation: Dynamic Spatial Packing
-Weights werden **neben** den Aktivierungen im Spatial-Dimension des Input-Tensors verpackt:
+### Key Innovation: Dynamic Spatial Packing
+Weights are packed **alongside** the activations in the spatial dimension of the input tensor:
 ```
 IOSurface: [1, DIM, 1, SEQ + WEIGHT_COLS]
-                        ↑Daten  ↑Weights
+                        ↑Data  ↑Weights
 
-Inside ANE-Kernel:
-  daten   = slice(input, [0,0,0,0], [1,DIM,1,SEQ])
+Inside ANE kernel:
+  data    = slice(input, [0,0,0,0], [1,DIM,1,SEQ])
   weights = slice(input, [0,0,0,SEQ], [1,DIM,1,OC])
-  output  = matmul(daten, weights)
+  output  = matmul(data, weights)
 ```
-→ **Ein Compile für alle Weight-Updates.** Ohne diesen Trick müsste man nach jedem Adam-Step alle Kernel neu kompilieren (119-Compile-Limit!).
+→ **One compile for all weight updates.** Without this trick, you would have to recompile all kernels after every Adam step (119-compile limit!).
 
-### Performance auf M3 Pro
-| Modell | Parameter | ms/step | Kompilier-Zeit |
-|--------|-----------|---------|----------------|
-| Stories110M (32K Vocab) | 109.5M | 183ms | 520ms |
-| Stories110M (124 Vocab, compacted) | 109.5M | 91ms | 520ms |
-| Qwen3-0.6B | 596M | ~412ms (geschätzt) | ~800ms |
-
----
-
-## Schicht 4: Lösung (Personal AI)
-
-> **Hinweis:** Schicht 4 ist ein separates Projekt und nicht in diesem Repository enthalten.
-
-Die Lösung baut auf ALLEN drei darunterliegenden Schichten auf:
-- **Schicht 1** (Forschung) lieferte das Wissen über QoS, Vocab-Compaction, Constraints
-- **Schicht 2** (libane) liefert die stabile API für zukünftige ANE-Nutzung
-- **Schicht 3** (Training) liefert den funktionierenden Trainer
+### Performance on M3 Pro
+| Model | Parameters | ms/step | Compile time |
+|-------|-----------|---------|--------------|
+| Stories110M (32K vocab) | 109.5M | 183ms | 520ms |
+| Stories110M (124 vocab, compacted) | 109.5M | 91ms | 520ms |
+| Qwen3-0.6B | 596M | ~412ms (estimated) | ~800ms |
 
 ---
 
-## Dateistruktur (dieses Repository)
+## Layer 4: Solution (Personal AI)
+
+> **Note:** Layer 4 is a separate project and is not included in this repository.
+
+The solution builds on ALL three underlying layers:
+- **Layer 1** (Research) provided the knowledge about QoS, vocab compaction, constraints
+- **Layer 2** (libane) provides the stable API for future ANE usage
+- **Layer 3** (Training) provides the working trainer
+
+---
+
+## File Structure (this repository)
 
 ```
 ANE-Training/
 │
-├── ARCHITECTURE.md              ← Dieses Dokument (Platform-Architektur)
-├── RESEARCH_ANE_COMPLETE.md     ← Volle Forschungs-Doku
-├── SUMMARY_TECHNICAL.md         ← Technische Zusammenfassung
-├── SUMMARY_SIMPLE.md            ← Einfache Zusammenfassung
+├── ARCHITECTURE.md              ← This document (platform architecture)
+├── RESEARCH_ANE_COMPLETE.md     ← Full research documentation
+├── SUMMARY_TECHNICAL.md         ← Technical summary
+├── SUMMARY_SIMPLE.md            ← Simple summary
 ├── LICENSE                      ← MIT
-├── install.sh                   ← One-Liner Installer
+├── install.sh                   ← One-liner installer
 │
-├── examples/                    ← Lauffähige Demos
+├── examples/                    ← Runnable demos
 │   ├── demo_train.c             ← ANE Training Demo (make demo)
 │   ├── bench.c                  ← Auto-Benchmark (make bench)
 │   ├── generate.c               ← Text Generation (make generate)
 │   ├── explore.m                ← ANE Explorer (make explore)
 │   └── Makefile
 │
-└── libane/                      ← Unsere C-API
-    ├── ane.h                    ← Stabile API-Schnittstelle
-    ├── ane.m                    ← Implementierung mit Version-Detection
-    ├── test_ane.c               ← Test-Suite
-    ├── README.md                ← API-Dokumentation
+└── libane/                      ← Our C API
+    ├── ane.h                    ← Stable API interface
+    ├── ane.m                    ← Implementation with version detection
+    ├── test_ane.c               ← Test suite
+    ├── README.md                ← API documentation
     └── Makefile
 ```
 
-### Externe Referenzen (nicht in diesem Repo)
-- **[maderix/ANE](https://github.com/maderix/ANE)** — Schicht 3: Training-Pipeline mit Dynamic Spatial Packing
+### External References (not in this repo)
+- **[maderix/ANE](https://github.com/maderix/ANE)** — Layer 3: Training pipeline with Dynamic Spatial Packing
 
 ---
 
-## Chronologie
+## Chronology
 
-| Wann | Was | Warum | Ergebnis |
-|------|-----|-------|----------|
-| Phase A | API-Tests & Probing | Wissen was die ANE-Hardware kann | 35 Klassen, QoS-Levels, h15g-Identität |
-| Phase B | libane gebaut | Stabile, version-sichere API | ane.h/ane.m, 3/3 Tests bestanden |
-| Phase C | Training verifiziert | Beweis dass es auf M3 Pro funktioniert | 91-183ms/step, 50 Steps stabil |
-| Phase D | Personal AI gebaut | Konkrete Anwendung | Collect→Tokenize→Train→Query Pipeline (separates Projekt) |
+| When | What | Why | Result |
+|------|------|-----|--------|
+| Phase A | API tests & probing | Learn what the ANE hardware can do | 35 classes, QoS levels, h15g identity |
+| Phase B | Built libane | Stable, version-safe API | ane.h/ane.m, 3/3 tests passed |
+| Phase C | Verified training | Proof that it works on M3 Pro | 91-183ms/step, 50 steps stable |
+| Phase D | Built Personal AI | Concrete application | Collect→Tokenize→Train→Query pipeline (separate project) |
 
-## Was kann man noch darauf bauen?
+## What else can you build on this?
 
-Die Platform (Schicht 1-3) ist die Basis. Darauf kann man bauen:
+The platform (Layers 1-3) is the foundation. You can build on top of it:
 
-- **Code-Assistent**: Lernt deine Code-Patterns, schlägt Completions vor
-- **Log-Analyzer**: Trainiert auf System-/App-Logs, erkennt Anomalien
-- **Dokument-Suche**: Semantische Suche über alle deine Dateien
-- **Meeting-Notes**: Lernt dein Vokabular, erstellt bessere Zusammenfassungen
-- **Lokaler Chatbot**: Fine-tuned auf deinen Schreibstil
-- **Federated Learning**: Mehrere Geräte trainieren lokal, teilen nur Gradienten
+- **Code assistant**: Learns your code patterns, suggests completions
+- **Log analyzer**: Trained on system/app logs, detects anomalies
+- **Document search**: Semantic search across all your files
+- **Meeting notes**: Learns your vocabulary, creates better summaries
+- **Local chatbot**: Fine-tuned on your writing style
+- **Federated learning**: Multiple devices train locally, share only gradients
 
-Alles 100% lokal, 100% privat, auf dem ANE deines Macs.
+All 100% local, 100% private, on your Mac's ANE.
