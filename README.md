@@ -11,7 +11,7 @@
  │  Reverse-Engineering Apples             │
  │  Neural Engine für Training             │
  │                                         │
- │  35 Klassen · 9.4 TFLOPS · 73KB API    │
+ │  35 Klassen · 9.4 TFLOPS · 1 Compile   │
  └─────────────────────────────────────────┘
 ```
 
@@ -45,7 +45,7 @@ Apple Silicon Chips (M1–M5) haben einen **Neural Engine (ANE)** — einen 16-C
 | **6** | QoS-Level — Background ist 42% schneller |
 | **h15g** | Hardware-ID des M3 Pro, 16 Cores |
 | **9.4** | TFLOPS Peak (FP16) |
-| **3x** | Conv 1x1 schneller als matmul |
+| **1x** | Compile für unbegrenzt viele Training-Steps |
 
 </td>
 <td width="50%">
@@ -55,10 +55,10 @@ Apple Silicon Chips (M1–M5) haben einen **Neural Engine (ANE)** — einen 16-C
 | | |
 |---|---|
 | **73 KB** | Shared Library |
-| **Auto** | Version-Detection |
+| **Dynamic** | Weights via IOSurface (zero recompile) |
 | **Zero-Copy** | I/O via IOSurface |
 | **6 QoS** | Prioritätsstufen |
-| **MIL** | Code-Generierung |
+| **FP16 Safe** | Overflow Protection eingebaut |
 
 </td>
 </tr>
@@ -140,21 +140,26 @@ make explore    # ← 35 ANE-Klassen interaktiv
 
 &nbsp;
 
-Trainiert einen Linear-Layer direkt auf dem ANE. Forward auf Neural Engine, Backward + SGD auf CPU.
+Trainiert einen Linear-Layer direkt auf dem ANE mit **Dynamic Spatial Packing** — kompiliert einmal, trainiert 60 Steps ohne Recompilation. Forward auf Neural Engine, Backward + SGD auf CPU.
 
 ```
 Hardware: h15g, 16 ANE cores
+Compiled once (dynamic weights, no recompilation needed)
+
 Goal: Train W so that Y = W @ X approximates Y = 2*X
 
 step   loss       W[0,0]   W[1,1]   ms/step
-0        1.4700    0.289    0.251   0.4
-10       0.2149    1.314    1.313   0.3
-59       0.0011    1.948    1.976   0.3
+0        1.3493    0.148    0.241   0.4
+5        0.5334    0.847    0.868   0.1
+10       0.2304    1.260    1.254   0.1
+30       0.0164    1.841    1.825   0.1
+59       0.0010    1.975    1.967   0.3
 
-Diagonal average: 1.955 (converged!)
+Diagonal average: 1.959 (converged!)
+Compile count: 1 / 119 budget
 ```
 
-Die Gewichte starten zufällig und konvergieren zu `W ≈ 2.0`. Loss: 1.47 → 0.001.
+**1 Compilation statt 60.** Weights werden per IOSurface-Write aktualisiert, nicht per Recompile. 0.1ms/step statt 0.3-0.5ms.
 
 </details>
 
@@ -295,6 +300,87 @@ xcrun clang -O2 -fobjc-arc -I libane -o my_test my_test.c libane/ane.m \
 </details>
 
 Ausführliche API-Dokumentation: **[libane/README.md](libane/README.md)**
+
+---
+
+## Dynamic Spatial Packing — Der Durchbruch
+
+> [!NOTE]
+> **Das zentrale Problem:** ANE bakt Weights bei Compilation ins HWX-Binary. Jeder Weight-Update erfordert eine Recompilation (~520ms). Limit: ~119 Compilations pro Prozess, dann stille Fehler.
+
+**Die Lösung:** Weights werden nicht mehr zur Compile-Zeit gebacken, sondern als Teil des **Input-Tensors** neben den Aktivierungen gepackt. Der MIL-Code sliced sie auseinander und führt die Berechnung per matmul aus. **Einmal kompilieren, unbegrenzt trainieren.**
+
+```
+Vorher (Standard):                    Nachher (Dynamic Spatial Packing):
+
+  Weights ──→ BLOBFILE ──→ Compile      Weights ──→ IOSurface ──→ Write
+  Input   ──→ IOSurface ──→ Eval        Input   ──→ IOSurface ──→ Eval
+  Pro Step: 1 Compile + 1 Eval          Pro Step: 1 Write + 1 Eval
+  Budget: 119 Steps max                 Budget: ∞ Steps
+```
+
+<details>
+<summary><b>Wie funktioniert das im Detail?</b></summary>
+
+&nbsp;
+
+**Input-Layout:** `[1, in_ch + in_ch*out_ch, 1, seq]`
+- Channels `[0..in_ch)`: Aktivierungen (Trainingsdaten)
+- Channels `[in_ch..in_ch+in_ch*out_ch)`: Weight-Matrix (flattened), nur Spatial-Position 0
+
+**MIL-Programm (generiert von `ane_mil_linear_dynamic()`):**
+```
+1. Cast FP32 → FP16
+2. slice_by_size → Aktivierungen [1, in_ch, 1, seq]
+3. slice_by_size → Weights [1, in_ch*out_ch, 1, 1]
+4. reshape → Weights [1, 1, out_ch, in_ch]
+5. reshape + transpose → Aktivierungen [1, 1, seq, in_ch]
+6. matmul(activations, weights^T) → [1, 1, seq, out_ch]
+7. transpose + reshape → [1, out_ch, 1, seq]
+8. Cast FP16 → FP32
+```
+
+**Neue libane API:**
+```c
+// Generiert MIL mit Weights-als-Input (statt ane_mil_linear)
+char *mil = ane_mil_linear_dynamic(in_ch, out_ch, seq);
+
+// Kompiliere EINMAL — keine Weights nötig
+ANEKernel *k = ane_compile(mil, strlen(mil), NULL, 0,
+                           1, &in_bytes, 1, &out_bytes, ANE_QOS_BACKGROUND);
+
+// Training-Loop: nur IOSurface updaten, nie recompile
+for (int step = 0; step < 10000; step++) {
+    ane_lock_input(k, 0);
+    float *ptr = (float *)ane_input_ptr(k, 0);
+    // Aktivierungen schreiben (Channels 0..in_ch)
+    // Weights schreiben (Channels in_ch..in_ch+in_ch*out_ch, Spatial 0)
+    ane_unlock_input(k, 0);
+    ane_eval(k, ANE_QOS_BACKGROUND);
+    // ... backward + SGD ...
+}
+```
+
+</details>
+
+<details>
+<summary><b>RE-Ergebnisse: Was NICHT funktioniert hat</b></summary>
+
+&nbsp;
+
+Vor Dynamic Spatial Packing haben wir 5 andere Ansätze getestet:
+
+| Ansatz | Ergebnis | Grund |
+|:---|:---|:---|
+| Disk-Patch + Unload/Reload | Weights nicht aktualisiert | ANE bakt Weights beim Compile ins HWX |
+| In-Memory VM-Patch | Keine Wirkung | ANE nutzt SRAM-Kopie, ignoriert RAM-Patches |
+| `_ANEWeight` Klasse | Request erstellt, Weights nicht angewandt | Unbekanntes Binding |
+| `weightsBuffer` Parameter in `_ANERequest` | Akzeptiert, keine Wirkung | ANE ignoriert Runtime-Weights |
+| `ane_reload_weights()` (unload → patch files → reload) | MIL wird vom ANE gelöscht | Unload löscht tmpDir |
+
+**Nur Dynamic Spatial Packing funktioniert** — Weights als Input-Daten, nicht als Compile-Time-Konstanten.
+
+</details>
 
 ---
 
@@ -448,31 +534,25 @@ Training Step = 91ms:
   ANE: 41%  ·  CPU: 59%  ← CPU ist der Bottleneck, nicht der ANE
 ```
 
-### Software-Optimierungspotenzial
+### Implementierte Optimierungen
 
-Rein durch Software-Änderungen (ohne neuen Chip) sind **~3x** möglich:
+| Optimierung | Status | Ergebnis |
+|:---|:---|:---|
+| **Dynamic Spatial Packing** — Weights als IOSurface-Input | **DONE** | 60 Compiles → **1 Compile**, ~119 Limit umgangen |
+| **FP16 Overflow Protection** — Output/Gradient-Sanitierung | **DONE** | Verhindert NaN/Inf-Divergenz |
+| **SRAM Budget Tracking** — Warnung bei >32MB | **DONE** | Diagnostik in `ane_compile()` |
+| **Compile Budget Warning** — Warnung bei 110/119 | **DONE** | Safety-Net für Legacy-Code |
+
+### Offene Optimierungen
 
 | Optimierung | Gain | Aufwand |
 |:---|:---|:---|
-| **Delta Compilation** — Weights patchen statt recompile | 4200ms → 494ms | Mittel |
 | **Pipeline-Parallelismus** — CPU Backward ‖ ANE Forward | ~40% Latenz | Hoch |
 | **Attention auf ANE** — via `where()` MIL-Op | ~5ms CPU-Ersparnis | Hoch |
 | **RMSNorm auf ANE** — als MIL-Programm | ~5ms CPU-Ersparnis | Mittel |
-| **Zero-Copy Weight-Updates** — direkt in IOSurface | 50µs pro Update | Niedrig |
-| **LoRA Adapter-as-Input** — kein Recompile bei Fine-Tuning | Zero Recompile | Mittel |
+| **LoRA Adapter-as-Input** — Hot-Swap Fine-Tuning | Zero Recompile | Mittel |
 
-```
-Nach Optimierung (geschätzt):
-
-  ANE Forward+Attn     ████████████░░░░░░░░  25ms
-  ANE Backward         ████████░░░░░░░░░░░░  15ms  (parallel mit CPU)
-  CPU dW (parallel)    ░░░░░░░░░░░░░░░░░░░░   0ms  (hidden)
-  Delta Reload         ███░░░░░░░░░░░░░░░░░   5ms
-
-  Geschätzt: ~30ms/step (3x schneller als aktuell)
-```
-
-> Vollständiger Optimierungsplan mit Implementierungsdetails: **[ROADMAP.md](ROADMAP.md)**
+> Vollständiger Optimierungsplan: **[ROADMAP.md](ROADMAP.md)**
 
 ---
 
@@ -524,7 +604,7 @@ ANE-Training/
 | **TOPS** | Tera Operations/Sek (zählt jede einzelne Op) |
 | **FP16** | 16-bit Float — natives Rechenformat des ANE |
 | **Conv 1x1** | 1x1 Convolution — 3x schneller als matmul auf ANE |
-| **Dynamic Spatial Packing** | Weights neben Aktivierungen packen → kein Re-Compile |
+| **Dynamic Spatial Packing** | Weights als IOSurface-Input statt BLOBFILE → 1x Compile, ∞ Training-Steps |
 
 </details>
 
