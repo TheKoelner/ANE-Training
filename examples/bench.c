@@ -289,12 +289,16 @@ int main(int argc, char *argv[]) {
     printf("  %-24s %7s %7s %9s %7s\n", "------------------------", "-------", "-------", "---------", "-------");
 
     struct { int ch; int sp; int depth; } stacks[] = {
-        {512, 64, 32}, {512, 64, 64}, {512, 64, 128}
+        {512, 64, 32}, {512, 64, 64}, {512, 64, 128},
+        // Optimal configs from performance sweep (2026-03-18)
+        {384, 128, 128}, {384, 128, 256},
+        {512, 128, 128}, {640, 64, 128},
     };
+    int n_stacks = sizeof(stacks) / sizeof(stacks[0]);
     double peak_stacked = 0;
-    double results_stacked[3];
+    double results_stacked[7];
 
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < n_stacks; i++) {
         int ch = stacks[i].ch, sp = stacks[i].sp, d = stacks[i].depth;
         double gflop = 2.0 * ch * ch * sp * d / 1e9;
         double wt_mb = (double)ch * ch * 2 * d / (1024 * 1024);
@@ -436,9 +440,9 @@ int main(int argc, char *argv[]) {
     }
 
     printf("\n");
-    for (int i = 0; i < 3; i++) {
-        char label[32];
-        snprintf(label, sizeof(label), "%dx stacked", stacks[i].depth);
+    for (int i = 0; i < n_stacks; i++) {
+        char label[48];
+        snprintf(label, sizeof(label), "%dx %dch sp%d", stacks[i].depth, stacks[i].ch, stacks[i].sp);
         bar(label, results_stacked[i], overall_peak * 1.2, 30);
     }
 
