@@ -129,6 +129,7 @@ Interactive menu — builds everything automatically.
 ./ane explore        # Explore 35 ANE classes interactively
 ./ane info           # Hardware detection
 ./ane test           # libane test suite
+./ane monitor        # Deep ANE probe (thermal, device info, sustained)
 ```
 
 <details open>
@@ -168,31 +169,34 @@ Detects your chip, sweeps kernel shapes, finds peak TFLOPS, compares to Apple sp
 
 ```
 Chip:   h15g (M3 Pro), 16 cores
+Thermal: Nominal (cool)
 Apple:  18 TOPS (marketing, INT8)
 
 ---- Single Conv Sweep ----
-768x2048 sp256     3.0 MB   0.81  0.221 ms    3.64
-2048x2048 sp128    8.0 MB   1.07  0.346 ms    3.10
+768x2048 sp256     3.0 MB   0.81  0.181 ms    4.46
+1024x1024 sp256    2.0 MB   0.54  0.125 ms    4.30
 
 ---- Sustained Peak (5 seconds) ----
 Kernel:    768x2048 sp256 (best from sweep)
-Evals:     18400 in 5.0s
-Sustained: 2.95 TFLOPS (fp16)
+Evals:     31200 in 5.0s
+Sustained: 5.01 TFLOPS (fp16)
+Thermal:   Nominal (cool)
 
 ---- Chip Comparison (measured fp16 TFLOPS) ----
->> h15g (M3 Pro)        5.46 TFLOPS  ███████████░░░░░░░░░░░░░░░░░░░
+>> h15g (M3 Pro)        9.89 TFLOPS  █████████████████████░░░░░░░░░
    h16g (M4)           11.00 TFLOPS  ███████████████████████░░░░░░░
 
 ---- Summary ----
-Measured peak:       5.46 TFLOPS (fp16 matmul)
+Measured peak:       9.89 TFLOPS (fp16 matmul)
 Apple marketing:     18 TOPS (INT8, theoretical)
-Efficiency:          30.3% of Apple spec
+Efficiency:          54.9% of Apple spec
+Thermal:             Nominal (cool)
 ```
 
 On startup, `./ane` runs a quick peak measurement (~1s) and shows:
 ```
   + Hardware: h15g (M3 Pro), 16 cores
-  + ANE Peak: 3.6 TFLOPS (18 TOPS Apple spec, 20%)
+  + ANE Peak: 9.90 TFLOPS (18 TOPS Apple spec, 55%)
   + API: v1(35)
 ```
 
@@ -446,14 +450,15 @@ Full API documentation: **[libane/README.md](libane/README.md)**
 
 | Metric | Value | |
 |:---|---:|:---|
-| Measured Peak FP16 | **5.46 TFLOPS** | 128x stacked conv (amortized dispatch) |
-| Best Single Kernel | **3.64 TFLOPS** | 768×2048 sp256 |
-| Sustained Peak (5s) | **2.95 TFLOPS** | Continuous eval, no interruption |
+| Measured Peak FP16 | **9.90 TFLOPS** | 128x stacked conv (amortized dispatch) |
+| Best Single Kernel | **4.73 TFLOPS** | 768×2048 sp256 |
+| Sustained Peak (5s) | **5.01 TFLOPS** | Continuous eval, no interruption |
 | Apple Marketing Spec | **18 TOPS** | INT8, theoretical |
-| Efficiency vs Spec | **30.3%** | Real fp16 matmul vs Apple INT8 TOPS |
+| Efficiency vs Spec | **55%** | Real fp16 matmul vs Apple INT8 TOPS |
 | Training Stories110M | **91–183 ms/step** | Depending on vocab size |
-| Dispatch Overhead | **~0.25 ms** | Minimum latency per kernel call |
+| Dispatch Overhead | **~0.17 ms** | Minimum latency per kernel call |
 | QoS Background vs Default | **42% faster** | Less scheduling overhead |
+| Thermal under Load | **Nominal (cool)** | No throttling after 10s sustained |
 
 > [!NOTE]
 > Apple's "18 TOPS" is an INT8 peak theoretical number. Real FP16 matmul throughput is lower due to dispatch overhead, memory bandwidth, and the fp16 data path being narrower than INT8. **Run `./ane bench` to measure your chip's actual peak.**
@@ -617,6 +622,27 @@ Training Step = 91ms:
 
 ---
 
+## Monitoring & Telemetry
+
+The benchmark and `./ane monitor` track what Apple exposes — and document what's locked:
+
+| Metric | Available | Method |
+|:---|:---|:---|
+| **Thermal State** | Yes | `ane_thermal_state()` — 4 levels (Nominal/Fair/Serious/Critical) |
+| **Execution Latency** | Yes | Sub-microsecond via `mach_absolute_time` |
+| **ANE Power (mW)** | Yes (sudo) | `powermetrics --samplers ane_power` (dashboard only) |
+| **Device Identity** | Yes | `ane_device_info()` — arch, cores, board type, build |
+| **ANE Frequency/Voltage** | No | Apple controls DVFS internally, not exposed |
+| **ANE Temperature** | No | No per-block sensor API; thermal state is system-level |
+| **Hardware Perf Counters** | No | `perfStatsMask` accepted but returns `nil` on consumer macOS |
+| **Real-Time Task Mode** | No | Requires Apple-internal entitlements |
+
+**Key finding:** The ANE stays **Nominal (cool)** even under sustained full-speed load (93k evals in 10s on M3 Pro). Thermal throttling is not a practical concern for training workloads.
+
+> Full research details: **[docs/ANE_MONITORING.md](docs/ANE_MONITORING.md)**
+
+---
+
 ## Project Structure
 
 ```
@@ -634,13 +660,16 @@ ANE-Training/
 │
 ├── examples/ ·························· Runnable Demos
 │   ├── demo_train.c                     Training Demo (Dynamic Spatial Packing)
-│   ├── bench.c                          Auto-Benchmark
+│   ├── bench.c                          Auto-Benchmark (with thermal monitoring)
 │   ├── generate.c                       Text Generation (Dynamic Spatial Packing)
 │   ├── explore.m                        ANE Explorer
 │   └── Makefile
 │
+├── docs/ ······························ Research Documentation
+│   └── ANE_MONITORING.md               Monitoring Deep Dive (what works, what's locked)
+│
 └── libane/ ···························· Our C API
-    ├── ane.h                            Stable API (never changes)
+    ├── ane.h                            Stable API (thermal, device info, compile)
     ├── ane.m                            Implementation + Version Detection
     ├── test_ane.c                       Test Suite (3/3 passed)
     ├── README.md                        API Documentation

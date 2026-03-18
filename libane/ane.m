@@ -380,6 +380,27 @@ ANEDeviceInfo ane_device_info(void) {
     return info;
 }
 
+ANEThermalState ane_thermal_state(void) {
+    NSProcessInfoThermalState ts = [[NSProcessInfo processInfo] thermalState];
+    switch (ts) {
+        case NSProcessInfoThermalStateNominal:  return ANE_THERMAL_NOMINAL;
+        case NSProcessInfoThermalStateFair:     return ANE_THERMAL_FAIR;
+        case NSProcessInfoThermalStateSerious:  return ANE_THERMAL_SERIOUS;
+        case NSProcessInfoThermalStateCritical: return ANE_THERMAL_CRITICAL;
+        default: return ANE_THERMAL_NOMINAL;
+    }
+}
+
+const char *ane_thermal_state_str(ANEThermalState state) {
+    switch (state) {
+        case ANE_THERMAL_NOMINAL:  return "Nominal (cool)";
+        case ANE_THERMAL_FAIR:     return "Fair (warm)";
+        case ANE_THERMAL_SERIOUS:  return "Serious (hot)";
+        case ANE_THERMAL_CRITICAL: return "Critical (throttling)";
+        default: return "Unknown";
+    }
+}
+
 ANEKernel *ane_compile(const char *mil, size_t mil_len,
                        const ANEWeight *weights, int n_weights,
                        int n_inputs, const size_t *input_sizes,

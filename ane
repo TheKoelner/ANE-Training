@@ -137,6 +137,7 @@ ensure_all_built() {
 cmd_info() {
     check_system
     ensure_built "demo_train" "demo_train"
+    ensure_built "bench_bin" "bench"
 
     echo ""
     echo -e "  ${BOLD}$(t "Hardware Info" "Hardware-Erkennung")${NC}"
@@ -146,6 +147,17 @@ cmd_info() {
     "$EXAMPLES/demo_train" 2>/dev/null | head -6 | while read -r line; do
         echo -e "  $line"
     done
+
+    # Get thermal + quick peak from bench
+    local quick_data
+    quick_data=$("$EXAMPLES/bench" --quick 2>/dev/null)
+    if [ -n "$quick_data" ]; then
+        local _thermal
+        _thermal=$(echo "$quick_data" | sed -n 's/.*THERMAL:\(.*\)/\1/p')
+        if [ -n "$_thermal" ]; then
+            echo -e "  ${D}Thermal:${NC} $_thermal"
+        fi
+    fi
 
     echo ""
     echo -e "  ${D}System:${NC}  $(sw_vers -productName) $(sw_vers -productVersion) ($(sw_vers -buildVersion))"
@@ -196,6 +208,22 @@ cmd_test() {
     info "$(t "Running libane tests ..." "libane Tests ...")"
     echo ""
     (cd "$LIBANE" && make test 2>&1)
+    echo ""
+}
+
+cmd_monitor() {
+    check_system
+    local TRAINING="$DIR/repo/training"
+    if [ ! -f "$TRAINING/test_ane_monitor" ]; then
+        echo ""
+        info "$(t "Building ANE monitor ..." "Baue ANE Monitor ...")"
+        (cd "$TRAINING" && make test_ane_monitor 2>/dev/null) || {
+            fail "$(t "Build failed" "Build fehlgeschlagen")"
+            return 1
+        }
+    fi
+    echo ""
+    "$TRAINING/test_ane_monitor"
     echo ""
 }
 
@@ -289,6 +317,7 @@ cmd_help() {
     echo -e "    ${C}./ane explore${NC}      $(t "ANE Framework Explorer (35 classes)" "ANE Framework Explorer (35 Klassen)")"
     echo -e "    ${C}./ane info${NC}         $(t "Hardware Info" "Hardware-Erkennung")"
     echo -e "    ${C}./ane test${NC}         $(t "libane Test Suite" "libane Test-Suite")"
+    echo -e "    ${C}./ane monitor${NC}      $(t "Deep ANE probe: thermal, device info, sustained" "Deep ANE Probe: Thermal, Device Info, Sustained")"
     echo -e "    ${C}./ane help${NC}         $(t "This help" "Diese Hilfe")"
     echo ""
     echo -e "  ${BOLD}$(t "Language:" "Sprache:")${NC}"
@@ -376,6 +405,7 @@ cmd_menu() {
         echo -e "    ${W}4${NC}  ANE Explorer          ${D}$(t "Explore 35 private classes" "35 private Klassen erkunden")${NC}"
         echo -e "    ${W}5${NC}  $(t "Hardware Info" "Hardware Info")         ${D}$(t "Chip, cores, API status" "Chip, Cores, API-Status")${NC}"
         echo -e "    ${W}6${NC}  $(t "libane Test Suite" "libane Tests")          ${D}$(t "Run the test suite" "Test-Suite laufen lassen")${NC}"
+        echo -e "    ${W}7${NC}  ANE Monitor            ${D}$(t "Deep probe: thermal, device info, sustained" "Deep Probe: Thermal, Device Info, Sustained")${NC}"
         echo ""
         echo -e "    ${W}?${NC}  $(t "What is this?" "Was ist das?")           ${D}$(t "Why ANE training? Key differentiators." "Warum ANE-Training? USP.")${NC}"
         echo -e "    ${W}d${NC}  $(t "Documentation" "Dokumentation")         ${D}$(t "Open README in browser" "README im Browser öffnen")${NC}"
@@ -392,6 +422,7 @@ cmd_menu() {
             4) cmd_explore ;;
             5) cmd_info ;;
             6) cmd_test ;;
+            7) cmd_monitor ;;
             '?'|about) cmd_about ;;
             d|D)
                 if [ -f "$DIR/README.md" ]; then
@@ -426,6 +457,7 @@ case "${ARGS[0]:-}" in
     explore)  cmd_explore ;;
     info)     cmd_info ;;
     test)     cmd_test ;;
+    monitor)  cmd_monitor ;;
     help|-h|--help) cmd_help ;;
     "")       cmd_menu ;;
     *)

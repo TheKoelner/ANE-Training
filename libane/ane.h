@@ -189,6 +189,22 @@ ANEWeight ane_weight_stacked(const char *name, int ch, int depth);
 // Generate MIL header (program declaration + buildInfo).
 char *ane_mil_header(void);
 
+// ===== System Monitoring =====
+
+// Thermal state: maps to NSProcessInfoThermalState
+typedef enum {
+    ANE_THERMAL_NOMINAL  = 0,  // Cool — full speed
+    ANE_THERMAL_FAIR     = 1,  // Warm — still OK
+    ANE_THERMAL_SERIOUS  = 2,  // Hot — system may throttle
+    ANE_THERMAL_CRITICAL = 3,  // Throttling active
+} ANEThermalState;
+
+// Get current system thermal state. No ane_init() required.
+ANEThermalState ane_thermal_state(void);
+
+// Human-readable thermal state string.
+const char *ane_thermal_state_str(ANEThermalState state);
+
 // ===== Lifecycle =====
 
 // Compile budget: ANE silently fails after ~119 compilations per process.

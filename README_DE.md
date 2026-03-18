@@ -128,6 +128,7 @@ Interaktives Menü — baut alles automatisch.
 ./ane explore        # 35 ANE-Klassen interaktiv erkunden
 ./ane info           # Hardware-Erkennung
 ./ane test           # libane Test-Suite
+./ane monitor        # Deep ANE Probe (Thermal, Device Info, Sustained)
 ```
 
 <details open>
@@ -167,26 +168,29 @@ Erkennt deinen Chip, sweept Kernel-Formen, findet Peak TFLOPS, vergleicht mit Ap
 
 ```
 Chip:   h15g (M3 Pro), 16 cores
+Thermal: Nominal (cool)
 Apple:  18 TOPS (marketing, INT8)
 
 ---- Single Conv Sweep ----
-768x2048 sp256     3.0 MB   0.81  0.221 ms    3.64
-2048x2048 sp128    8.0 MB   1.07  0.346 ms    3.10
+768x2048 sp256     3.0 MB   0.81  0.181 ms    4.46
+1024x1024 sp256    2.0 MB   0.54  0.125 ms    4.30
 
 ---- Sustained Peak (5 seconds) ----
 Kernel:    768x2048 sp256 (best from sweep)
-Sustained: 2.95 TFLOPS (fp16)
+Sustained: 5.01 TFLOPS (fp16)
+Thermal:   Nominal (cool)
 
 ---- Summary ----
-Measured peak:       5.46 TFLOPS (fp16 matmul)
+Measured peak:       9.89 TFLOPS (fp16 matmul)
 Apple marketing:     18 TOPS (INT8, theoretical)
-Efficiency:          30.3% of Apple spec
+Efficiency:          54.9% of Apple spec
+Thermal:             Nominal (cool)
 ```
 
 Beim Start misst `./ane` automatisch den Peak (~1s):
 ```
   + Hardware: h15g (M3 Pro), 16 cores
-  + ANE Peak: 3.6 TFLOPS (18 TOPS Apple spec, 20%)
+  + ANE Peak: 9.90 TFLOPS (18 TOPS Apple spec, 55%)
   + API: v1(35)
 ```
 
@@ -440,14 +444,15 @@ Ausführliche API-Dokumentation: **[libane/README.md](libane/README.md)**
 
 | Metric | Wert | |
 |:---|---:|:---|
-| Gemessener Peak FP16 | **5.46 TFLOPS** | 128x stacked conv (amortisierter Dispatch) |
-| Bester Einzel-Kernel | **3.64 TFLOPS** | 768×2048 sp256 |
-| Sustained Peak (5s) | **2.95 TFLOPS** | Durchgehende Evaluation, ohne Unterbrechung |
+| Gemessener Peak FP16 | **9.90 TFLOPS** | 128x stacked conv (amortisierter Dispatch) |
+| Bester Einzel-Kernel | **4.73 TFLOPS** | 768×2048 sp256 |
+| Sustained Peak (5s) | **5.01 TFLOPS** | Durchgehende Evaluation, ohne Unterbrechung |
 | Apple Marketing Spec | **18 TOPS** | INT8, theoretisch |
-| Effizienz vs Spec | **30.3%** | Reale fp16 Matmul vs Apple INT8 TOPS |
+| Effizienz vs Spec | **55%** | Reale fp16 Matmul vs Apple INT8 TOPS |
 | Training Stories110M | **91–183 ms/step** | Je nach Vocab-Größe |
-| Dispatch-Overhead | **~0.25 ms** | Mindest-Latenz pro Kernel-Aufruf |
+| Dispatch-Overhead | **~0.17 ms** | Mindest-Latenz pro Kernel-Aufruf |
 | QoS Background vs Default | **42% schneller** | Weniger Scheduling-Overhead |
+| Thermal unter Last | **Nominal (cool)** | Kein Throttling nach 10s Dauerlast |
 
 > [!NOTE]
 > Apples "18 TOPS" ist ein theoretischer INT8-Peak. Realer FP16-Matmul-Durchsatz ist niedriger wegen Dispatch-Overhead, Speicherbandbreite und dem schmaleren fp16-Datenpfad. **Starte `./ane bench` um den echten Peak deines Chips zu messen.**
@@ -611,6 +616,27 @@ Training Step = 91ms:
 
 ---
 
+## Monitoring & Telemetrie
+
+Der Benchmark und `./ane monitor` tracken was Apple exponiert — und dokumentieren was gesperrt ist:
+
+| Metrik | Verfügbar | Methode |
+|:---|:---|:---|
+| **Thermal State** | Ja | `ane_thermal_state()` — 4 Stufen (Nominal/Fair/Serious/Critical) |
+| **Ausführungslatenz** | Ja | Sub-Mikrosekunde via `mach_absolute_time` |
+| **ANE Power (mW)** | Ja (sudo) | `powermetrics --samplers ane_power` (nur Dashboard) |
+| **Device Identity** | Ja | `ane_device_info()` — Arch, Cores, Board Type, Build |
+| **ANE Frequenz/Spannung** | Nein | Apple kontrolliert DVFS intern, nicht exponiert |
+| **ANE Temperatur** | Nein | Kein Per-Block Sensor-API; Thermal State ist system-level |
+| **Hardware Perf Counter** | Nein | `perfStatsMask` akzeptiert aber gibt `nil` auf Consumer-macOS |
+| **Real-Time Task Mode** | Nein | Braucht Apple-interne Entitlements |
+
+**Kernfinding:** Der ANE bleibt **Nominal (cool)** selbst unter Dauerlast (93k Evals in 10s auf M3 Pro). Thermal Throttling ist kein praktisches Problem für Training.
+
+> Detaillierte Forschungsergebnisse: **[docs/ANE_MONITORING.md](docs/ANE_MONITORING.md)**
+
+---
+
 ## Projektstruktur
 
 ```
@@ -628,13 +654,16 @@ ANE-Training/
 │
 ├── examples/ ·························· Lauffähige Demos
 │   ├── demo_train.c                     Training Demo (Dynamic Spatial Packing)
-│   ├── bench.c                          Auto-Benchmark
+│   ├── bench.c                          Auto-Benchmark (mit Thermal Monitoring)
 │   ├── generate.c                       Text Generation (Dynamic Spatial Packing)
 │   ├── explore.m                        ANE Explorer
 │   └── Makefile
 │
+├── docs/ ······························ Forschungsdokumentation
+│   └── ANE_MONITORING.md               Monitoring Deep Dive (was geht, was gesperrt ist)
+│
 └── libane/ ···························· Unsere C-API
-    ├── ane.h                            Stabile API (ändert sich nie)
+    ├── ane.h                            Stabile API (Thermal, Device Info, Compile)
     ├── ane.m                            Implementierung + Version-Detection
     ├── test_ane.c                       Test-Suite (3/3 bestanden)
     ├── README.md                        API-Dokumentation

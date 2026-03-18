@@ -161,12 +161,13 @@ static int quick_peak(void) {
         free(mil); ane_weight_free(&w);
     }
 
-    printf("TFLOPS:%.2f|TOPS:%.0f|CHIP:%s|ARCH:%s|CORES:%d|API:v%d(%d)\n",
+    printf("TFLOPS:%.2f|TOPS:%.0f|CHIP:%s|ARCH:%s|CORES:%d|API:v%d(%d)|THERMAL:%s\n",
         peak, apple_tops,
         name ? name : "unknown",
         info.arch ? info.arch : "?",
         info.num_cores,
-        ane_api_info().api_version, ane_api_info().classes_found);
+        ane_api_info().api_version, ane_api_info().classes_found,
+        ane_thermal_state_str(ane_thermal_state()));
     return 0;
 }
 
@@ -201,6 +202,7 @@ int main(int argc, char *argv[]) {
         name ? ")" : "", info.num_cores);
     printf("  Build:  %s\n", info.build ? info.build : "?");
     printf("  API:    v%d (%d classes)\n", ane_api_info().api_version, ane_api_info().classes_found);
+    printf("  Thermal: %s\n", ane_thermal_state_str(ane_thermal_state()));
 
     // Apple marketing spec for this chip
     double apple_tops = 0;
@@ -341,8 +343,10 @@ int main(int argc, char *argv[]) {
             // Warmup
             for (int j = 0; j < 10; j++) ane_eval(k, ANE_QOS_BACKGROUND);
 
-            // 5 seconds sustained
+            // 5 seconds sustained with thermal monitoring
             int count = 0;
+            ANEThermalState thermal_start = ane_thermal_state();
+            ANEThermalState thermal_max = thermal_start;
             struct timespec t0, t1;
             clock_gettime(CLOCK_MONOTONIC, &t0);
             for (;;) {
@@ -352,12 +356,16 @@ int main(int argc, char *argv[]) {
                     clock_gettime(CLOCK_MONOTONIC, &t1);
                     double elapsed = (t1.tv_sec - t0.tv_sec) * 1e3 + (t1.tv_nsec - t0.tv_nsec) / 1e6;
                     if (elapsed >= 5000.0) break;
+                    // Sample thermal state periodically
+                    ANEThermalState ts = ane_thermal_state();
+                    if (ts > thermal_max) thermal_max = ts;
                 }
             }
             clock_gettime(CLOCK_MONOTONIC, &t1);
             double ms = (t1.tv_sec - t0.tv_sec) * 1e3 + (t1.tv_nsec - t0.tv_nsec) / 1e6;
             double ms_per = ms / count;
             sustained_tflops = gflop / ms_per;
+            ANEThermalState thermal_end = ane_thermal_state();
 
             char label[32];
             snprintf(label, sizeof(label), "%dx%d sp%d", ci, co, sp);
@@ -365,6 +373,10 @@ int main(int argc, char *argv[]) {
             printf("  Evals:     %d in %.1fs\n", count, ms / 1000);
             printf("  Latency:   %.3f ms/eval\n", ms_per);
             printf("  Sustained: %.2f TFLOPS (fp16)\n", sustained_tflops);
+            printf("  Thermal:   %s", ane_thermal_state_str(thermal_end));
+            if (thermal_max > thermal_start)
+                printf(" (peaked: %s)", ane_thermal_state_str(thermal_max));
+            printf("\n");
             ane_free(k);
         } else {
             printf("  FAILED to compile sustained test kernel\n");
@@ -461,6 +473,7 @@ int main(int argc, char *argv[]) {
     }
     printf("\n");
     printf("  Best QoS:            Background (9)\n");
+    printf("  Thermal:             %s\n", ane_thermal_state_str(ane_thermal_state()));
     printf("  Dispatch overhead:   ~%.2f ms/kernel (minimum latency floor)\n", dispatch_overhead_ms);
     printf("  Compiles used:       %d / %d\n", ane_compile_count(), ANE_COMPILE_BUDGET);
     printf("\n");
@@ -523,6 +536,9 @@ int main(int argc, char *argv[]) {
             fprintf(fp, "qos_default=%.2f\n", qos_tflops[2]);
             fprintf(fp, "qos_user_initiated=%.2f\n", qos_tflops[3]);
             fprintf(fp, "qos_user_interactive=%.2f\n", qos_tflops[4]);
+            fprintf(fp, "\n");
+            fprintf(fp, "# Thermal state during benchmark\n");
+            fprintf(fp, "thermal_state='%s'\n", ane_thermal_state_str(ane_thermal_state()));
             fprintf(fp, "\n");
             fprintf(fp, "# Recommended training parameters\n");
             fprintf(fp, "recommended_accum_steps=%d\n", rec_accum);
