@@ -24,6 +24,17 @@
 
 > Die erste eigenständige C-API (`libane`) für Apples privaten Neural Engine. Ermöglicht **Training** direkt auf dem ANE — Apple beschränkt ihn offiziell auf Inference via CoreML. Vollständige Hardware-Forschung, lauffähige Demos, Benchmark-Suite.
 
+> [!IMPORTANT]
+> **Das IST:**
+> - Direkter Zugriff auf Apples **private ANE-API** (76 Klassen entdeckt, 35 via libane exponiert)
+> - **FP16 native Compute** auf der Neural Engine Hardware — 9.9 TFLOPS auf M3 Pro
+> - **1 Compile → unbegrenzte Training-Steps** via Dynamic Spatial Packing
+>
+> **Das ist NICHT:**
+> - CoreML / Metal / MLX — wir umgehen Apples öffentliche Frameworks komplett
+> - CPU-Training (cblas/NEON/AMX) — Compute läuft auf der Neural Engine, nicht der CPU
+> - GPU-Training — der ANE ist ein separater Beschleuniger mit eigenem 32 MB SRAM
+
 ---
 
 <table>

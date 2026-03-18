@@ -546,6 +546,7 @@ bool ane_eval(ANEKernel *k, ANEQoS qos) {
 
 void ane_write(ANEKernel *k, int idx, const void *data, size_t bytes) {
     if (!k || idx < 0 || idx >= k->nIn) return;
+    if (bytes > k->inBytes[idx]) bytes = k->inBytes[idx];
     IOSurfaceLock(k->ioIn[idx], 0, NULL);
     memcpy(IOSurfaceGetBaseAddress(k->ioIn[idx]), data, bytes);
     IOSurfaceUnlock(k->ioIn[idx], 0, NULL);
@@ -553,6 +554,7 @@ void ane_write(ANEKernel *k, int idx, const void *data, size_t bytes) {
 
 void ane_read(ANEKernel *k, int idx, void *data, size_t bytes) {
     if (!k || idx < 0 || idx >= k->nOut) return;
+    if (bytes > k->outBytes[idx]) bytes = k->outBytes[idx];
     IOSurfaceLock(k->ioOut[idx], kIOSurfaceLockReadOnly, NULL);
     memcpy(data, IOSurfaceGetBaseAddress(k->ioOut[idx]), bytes);
     IOSurfaceUnlock(k->ioOut[idx], kIOSurfaceLockReadOnly, NULL);
